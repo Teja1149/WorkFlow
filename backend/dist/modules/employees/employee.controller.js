@@ -1,4 +1,4 @@
-import { getEmployees, createEmployee, updateEmployee, deleteEmployee, } from './employee.service.js';
+import { getEmployees, createEmployee, updateEmployee, } from './employee.service.js';
 export async function listEmployees(req, res) {
     try {
         const organizationId = req.profile?.organization_id;
@@ -26,15 +26,13 @@ export async function listEmployees(req, res) {
 export async function addEmployee(req, res) {
     try {
         const organizationId = req.profile?.organization_id;
-        const requesterRole = req.profile?.role;
-        const requesterId = req.profile?.id;
-        if (!organizationId || !requesterRole || !requesterId) {
+        if (!organizationId) {
             return res.status(400).json({
                 success: false,
-                message: 'Organization or user context not found.',
+                message: 'Organization not found.',
             });
         }
-        const employee = await createEmployee(organizationId, requesterRole, requesterId, req.body);
+        const employee = await createEmployee(organizationId, req.body);
         return res.status(201).json({
             success: true,
             data: employee,
@@ -70,32 +68,6 @@ export async function editEmployee(req, res) {
             message: error instanceof Error
                 ? error.message
                 : 'Unable to update employee.',
-        });
-    }
-}
-export async function removeEmployee(req, res) {
-    try {
-        const organizationId = req.profile?.organization_id;
-        const requesterRole = req.profile?.role;
-        const employeeId = req.params.id;
-        if (!organizationId || !requesterRole || !employeeId) {
-            return res.status(400).json({
-                success: false,
-                message: 'Organization or user context not found.',
-            });
-        }
-        const result = await deleteEmployee(organizationId, requesterRole, employeeId);
-        return res.json({
-            success: true,
-            data: result,
-        });
-    }
-    catch (error) {
-        return res.status(400).json({
-            success: false,
-            message: error instanceof Error
-                ? error.message
-                : 'Unable to delete employee account.',
         });
     }
 }
