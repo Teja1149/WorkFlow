@@ -1,0 +1,446 @@
+import React, { useState, useEffect } from 'react'
+import {
+  Calendar,
+  CheckCircle2,
+  Filter,
+  Send,
+  Loader2,
+  FileText,
+  Layers,
+  Sparkles,
+} from 'lucide-react'
+import { useAuth } from '../auth/AuthContext'
+import {
+  getProjectUpdateTemplate,
+  submitProjectDailyUpdate,
+  getProjectDailyUpdates,
+} from './project-update.service'
+import type {
+  ProjectUpdateTemplate,
+  ProjectDailyUpdate,
+} from './project-update.types'
+import ProjectUpdateTemplateBuilder from './ProjectUpdateTemplateBuilder'
+
+interface Props {
+  projectId: string
+}
+
+export default function ProjectDailyUpdatesSection({ projectId }: Props) {
+  const { accessToken, profile } = useAuth()
+
+  const [template, setTemplate] = useState<ProjectUpdateTemplate | null>(null)
+  const [updates, setUpdates] = useState<ProjectDailyUpdate[]>([])
+  const [loading, setLoading] = useState(true)
+
+  // Filters
+  const [selectedEmployee, setSelectedEmployee] = useState<string>('')
+  const [fromDate, setFromDate] = useState<string>('')
+  const [toDate, setToDate] = useState<string>('')
+
+  // Form state for employee submission
+  const [paragraphUpdate, setParagraphUpdate] = useState('')
+  const [progressPercent, setProgressPercent] = useState<number>(0)
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({})
+  const [submitting, setSubmitting] = useState(false)
+  const [formSuccess, setFormSuccess] = useState('')
+  const [formError, setFormError] = useState('')
+
+  // Toggle for template builder mode (for Managers/Admins)
+  const [showBuilder, setShowBuilder] = useState(false)
+
+  const isManagerOrAdmin =
+    profile?.role === 'SUPER_ADMIN' || profile?.role === 'MANAGER'
+
+  async function loadData() {
+    if (!accessToken || !projectId) return
+    setLoading(true)
+    try {
+      const [templateData, updatesData] = await Promise.all([
+        getProjectUpdateTemplate(accessToken, projectId),
+        getProjectDailyUpdates(accessToken, projectId, {
+          employeeId: selectedEmployee || undefined,
+          fromDate: fromDate || undefined,
+          toDate: toDate || undefined,
+        }).catch(() => []),
+      ])
+
+      setTemplate(templateData)
+      setUpdates(updatesData || [])
+    } catch (err) {
+      console.error('Failed to load project daily updates:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadData()
+  }, [accessToken, projectId, selectedEmployee, fromDate, toDate])
+
+  const handleFieldValueChange = (fieldId: string, val: string) => {
+    setFieldValues((prev) => ({ ...prev, [fieldId]: val }))
+  }
+
+  async function handleSubmitUpdate(e: React.FormEvent) {
+    e.preventDefault()
+    if (!accessToken || !projectId) return
+
+    setSubmitting(true)
+    setFormSuccess('')
+    setFormError('')
+
+    try {
+      await submitProjectDailyUpdate(accessToken, projectId, {
+        paragraphUpdate,
+        progressPercent: Number(progressPercent),
+        values: fieldValues,
+      })
+
+      setFormSuccess('Daily update submitted successfully!')
+      setParagraphUpdate('')
+      setProgressPercent(0)
+      setFieldValues({})
+      await loadData()
+    } catch (err: any) {
+      setFormError(err.message || 'Failed to submit daily update.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="space-y-8 mt-8">
+      {/* Header Banner */}
+      <div className="flex items-center justify-between bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+        <div className="flex items-center gap-3.5">
+          <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold border border-blue-100">
+            <Layers size={24} />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+              Structured Project Daily Updates
+              <Sparkles size={18} className="text-amber-500" />
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Custom template metric tracking & employee daily performance records.
+            </p>
+          </div>
+        </div>
+
+        {isManagerOrAdmin && (
+          <button
+            onClick={() => setShowBuilder(!showBuilder)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs rounded-xl transition shadow-xs"
+          >
+            {showBuilder ? 'Close Template Builder' : 'Configure Report Template'}
+          </button>
+        )}
+      </div>
+
+      {/* Admin/Manager Template Builder Section */}
+      {showBuilder && isManagerOrAdmin && (
+        <ProjectUpdateTemplateBuilder
+          projectId={projectId}
+          onSaved={() => {
+            setShowBuilder(false)
+            void loadData()
+          }}
+        />
+      )}
+
+      {/* Employee Daily Update Submission Card (If template exists) */}
+      {template && template.fields && template.fields.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
+          <div className="border-b border-slate-100 pb-4 flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Submit Today's Update</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Fill in the required template metrics for {template.title || template.name || 'this project'}.
+              </p>
+            </div>
+            <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
+              Active Template
+            </span>
+          </div>
+
+          {formSuccess && (
+            <div className="p-3.5 rounded-xl bg-emerald-50 text-emerald-800 text-xs font-semibold border border-emerald-200 flex items-center gap-2">
+              <CheckCircle2 size={16} className="text-emerald-600" />
+              <span>{formSuccess}</span>
+            </div>
+          )}
+
+          {formError && (
+            <div className="p-3.5 rounded-xl bg-rose-50 text-rose-800 text-xs font-semibold border border-rose-200">
+              {formError}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmitUpdate} className="space-y-6">
+            {/* Dynamic Template Fields Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+              {template.fields.map((f) => (
+                <div key={f.id} className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    {f.field_name}{' '}
+                    {f.is_required && <span className="text-rose-500">*</span>}
+                  </label>
+                  <input
+                    type={f.field_type === 'NUMBER' ? 'number' : f.field_type === 'DATE' ? 'date' : 'text'}
+                    required={f.is_required}
+                    placeholder={`Enter ${f.field_name.toLowerCase()}`}
+                    value={fieldValues[f.id] || ''}
+                    onChange={(e) => handleFieldValueChange(f.id, e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                  />
+                </div>
+              ))}
+            </div>
+
+            {/* Overall Progress & Paragraph Update */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-100">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  Overall Progress ({progressPercent}%)
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={progressPercent}
+                  onChange={(e) => setProgressPercent(Number(e.target.value))}
+                  className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                />
+              </div>
+
+              <div className="md:col-span-2 space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  Paragraph Work Summary
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Describe your progress, accomplishments, or blockers today..."
+                  value={paragraphUpdate}
+                  onChange={(e) => setParagraphUpdate(e.target.value)}
+                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={submitting}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-6 py-2.5 rounded-xl transition shadow-xs disabled:opacity-50"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="animate-spin" size={15} />
+                    Submitting...
+                  </>
+                ) : (
+                  <>
+                    <Send size={15} />
+                    Submit Daily Report
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Filter Bar */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase tracking-wider">
+          <Filter size={16} className="text-blue-600" />
+          <span>Filter Reports</span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-500 font-medium">From:</span>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs outline-none focus:border-blue-500"
+            />
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-500 font-medium">To:</span>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs outline-none focus:border-blue-500"
+            />
+          </div>
+
+          {(fromDate || toDate || selectedEmployee) && (
+            <button
+              onClick={() => {
+                setFromDate('')
+                setToDate('')
+                setSelectedEmployee('')
+              }}
+              className="text-xs text-rose-600 font-semibold hover:underline"
+            >
+              Clear Filters
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Dynamic Matrix Table Section */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-bold text-slate-900">
+              {template?.title || 'Daily Updates Matrix'}
+            </h3>
+            <p className="text-xs text-slate-500">
+              Submitted metrics breakdown across project team members.
+            </p>
+          </div>
+          <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
+            {updates.length} {updates.length === 1 ? 'Record' : 'Records'}
+          </span>
+        </div>
+
+        {loading ? (
+          <div className="py-12 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+            <Loader2 className="animate-spin text-blue-600" size={18} />
+            <span>Loading daily updates...</span>
+          </div>
+        ) : updates.length === 0 ? (
+          <div className="py-12 text-center text-slate-400 space-y-2">
+            <FileText size={28} className="mx-auto text-slate-300" />
+            <p className="font-medium text-slate-600 text-sm">No daily updates recorded yet.</p>
+            <p className="text-xs text-slate-400">
+              {template ? 'Use the form above to submit your first report.' : 'Configure a template to start tracking dynamic reports.'}
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
+                <tr>
+                  <th className="p-3.5">Date</th>
+                  <th className="p-3.5">Employee</th>
+                  {template?.fields?.map((f) => (
+                    <th key={f.id} className="p-3.5">{f.field_name}</th>
+                  ))}
+                  <th className="p-3.5 text-center">Progress</th>
+                  <th className="p-3.5">Summary</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {updates.map((upd) => {
+                  const empName = upd.profiles
+                    ? `${upd.profiles.first_name} ${upd.profiles.last_name || ''}`
+                    : 'Employee'
+                  return (
+                    <tr key={upd.id} className="hover:bg-slate-50/60 transition">
+                      <td className="p-3.5 font-semibold text-slate-900 whitespace-nowrap">
+                        {new Date(upd.update_date).toLocaleDateString()}
+                      </td>
+                      <td className="p-3.5 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 font-bold flex items-center justify-center text-[10px]">
+                            {empName[0]}
+                          </div>
+                          <span className="font-semibold text-slate-800">{empName}</span>
+                        </div>
+                      </td>
+
+                      {/* Dynamic Field Values */}
+                      {template?.fields?.map((f) => {
+                        const matchedVal = upd.values?.find(
+                          (v) => v.field_id === f.id,
+                        )
+                        return (
+                          <td key={f.id} className="p-3.5 font-mono font-semibold text-slate-700">
+                            {matchedVal?.value_text || '—'}
+                          </td>
+                        )
+                      })}
+
+                      <td className="p-3.5 text-center whitespace-nowrap">
+                        <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-100">
+                          {upd.progress_percent}%
+                        </span>
+                      </td>
+
+                      <td className="p-3.5 text-slate-600 max-w-xs truncate">
+                        {upd.paragraph_update || '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Individual Employee Performance Cards */}
+      {updates.length > 0 && (
+        <div className="space-y-4">
+          <h3 className="text-lg font-bold text-slate-900">Individual Performance</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {updates.map((upd) => {
+              const empName = upd.profiles
+                ? `${upd.profiles.first_name} ${upd.profiles.last_name || ''}`
+                : 'Employee'
+              return (
+                <div
+                  key={upd.id}
+                  className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3"
+                >
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 font-bold flex items-center justify-center text-sm border border-purple-100">
+                        {empName[0]}
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-sm text-slate-900">{empName}</h4>
+                        <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                          <Calendar size={11} />
+                          {new Date(upd.update_date).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </div>
+                    <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                      {upd.progress_percent}%
+                    </span>
+                  </div>
+
+                  {upd.paragraph_update && (
+                    <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">
+                      "{upd.paragraph_update}"
+                    </p>
+                  )}
+
+                  {upd.values && upd.values.length > 0 && (
+                    <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
+                      {upd.values.map((v) => (
+                        <div key={v.id} className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                          <span className="block text-[10px] text-slate-400 uppercase font-semibold">
+                            {v.project_update_fields?.field_name || 'Metric'}
+                          </span>
+                          <span className="font-bold text-slate-800">{v.value_text || '—'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
