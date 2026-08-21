@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   CheckCircle2,
   Clock,
@@ -16,7 +17,7 @@ function WorkRow({ item }: { item: any }) {
       <div className="space-y-1.5 flex-1 min-w-60">
         <div className="flex items-center gap-2">
           {item.projects && (
-            <span className="font-mono text-[11px] font-extrabold px-2.5 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-100">
+            <span className="font-mono text-[11px] font-extrabold px-2.5 py-0.5 rounded-md bg-[#801424] text-white shadow-2xs">
               {item.projects.project_key}
             </span>
           )}
@@ -40,7 +41,7 @@ function WorkRow({ item }: { item: any }) {
 
         {item.deadline && (
           <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium">
-            <Calendar size={13} className="text-blue-500" />
+            <Calendar size={13} className="text-[#801424]" />
             <span>Deadline: {new Date(item.deadline).toLocaleDateString()}</span>
           </div>
         )}
@@ -66,6 +67,7 @@ function WorkRow({ item }: { item: any }) {
 }
 
 export default function EmployeeDashboard() {
+  const navigate = useNavigate()
   const { accessToken, profile } = useAuth()
   const [dashboard, setDashboard] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -153,7 +155,7 @@ export default function EmployeeDashboard() {
         </div>
         <button
           onClick={() => navigate('/work')}
-          className="bg-[#09090b] text-white text-xs font-semibold px-4 py-2 rounded-xl hover:bg-[#18181b] transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
+          className="bg-[#801424] text-white text-xs font-bold px-4 py-2 rounded-xl hover:bg-[#9f1239] transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
         >
           <span>Submit</span>
           <span>→</span>
