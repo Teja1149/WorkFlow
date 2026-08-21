@@ -152,8 +152,8 @@ export default function EmployeeDashboard() {
           </div>
         </div>
         <button
-          onClick={() => navigate('/work')}
-          className="bg-[#09090b] text-white text-xs font-semibold px-4 py-2 rounded-xl hover:bg-[#18181b] transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
+          onClick={() => (window.location.href = '/work')}
+          className="bg-[#801424] hover:bg-[#9f1239] text-white text-xs font-bold px-4 py-2 rounded-xl transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
         >
           <span>Submit</span>
           <span>→</span>
