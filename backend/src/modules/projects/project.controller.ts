@@ -5,6 +5,7 @@ import {
   getProjectMembers,
   addProjectMember,
   removeProjectMember,
+  deleteProject,
 } from './project.service.js'
 
 export async function listProjects(req: Request, res: Response) {
@@ -137,6 +138,34 @@ export async function removeMemberFromProject(req: Request, res: Response) {
         error instanceof Error
           ? error.message
           : 'Unable to remove member.',
+    })
+  }
+}
+
+export async function removeProject(req: Request, res: Response) {
+  try {
+    const organizationId = req.profile?.organization_id
+    const projectId = req.params.id as string
+
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Organization not found.',
+      })
+    }
+
+    await deleteProject(organizationId, projectId)
+    return res.json({
+      success: true,
+      message: 'Project deleted successfully.',
+    })
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to delete project.',
     })
   }
 }

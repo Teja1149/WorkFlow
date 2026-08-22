@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, FolderKanban, Calendar, User, X, AlertCircle } from 'lucide-react'
+import { Plus, Search, FolderKanban, Calendar, User, X, AlertCircle, Trash2 } from 'lucide-react'
 import { useAuth } from '../features/auth/AuthContext'
-import { getProjects, createProject, type Project } from '../features/projects/project.service'
+import { getProjects, createProject, deleteProject, type Project } from '../features/projects/project.service'
 import { getEmployees } from '../features/employees/employee.service'
 import type { UserProfile } from '../features/auth/auth.types'
 
@@ -101,6 +101,30 @@ export default function Projects() {
     }
   }
 
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  async function handleDeleteProject(e: React.MouseEvent, proj: Project) {
+    e.stopPropagation()
+    if (!accessToken) return
+
+    const confirmDelete = window.confirm(
+      `Are you sure you want to delete project "${proj.name}" (${proj.project_key})? This will permanently remove the project and its members.`,
+    )
+    if (!confirmDelete) return
+
+    setDeletingId(proj.id)
+    setError('')
+
+    try {
+      await deleteProject(accessToken, proj.id)
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to delete project.')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
@@ -166,17 +190,29 @@ export default function Projects() {
                       <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-[#801424] text-white shadow-2xs">
                         {proj.project_key}
                       </span>
-                      <span
-                        className={`text-xs font-semibold px-2.5 py-1 rounded-lg ${
-                          proj.status === 'ACTIVE'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : proj.status === 'PLANNING'
-                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                            : 'bg-slate-100 text-slate-700 border border-slate-200'
-                        }`}
-                      >
-                        {proj.status}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-xs font-semibold px-2.5 py-1 rounded-lg ${
+                            proj.status === 'ACTIVE'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : proj.status === 'PLANNING'
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                              : 'bg-slate-100 text-slate-700 border border-slate-200'
+                          }`}
+                        >
+                          {proj.status}
+                        </span>
+                        {profile?.role === 'SUPER_ADMIN' && (
+                          <button
+                            onClick={(e) => handleDeleteProject(e, proj)}
+                            disabled={deletingId === proj.id}
+                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition disabled:opacity-30 cursor-pointer"
+                            title="Delete Project"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <h3 className="text-lg font-bold text-slate-900 mb-1 hover:text-[#801424] transition">

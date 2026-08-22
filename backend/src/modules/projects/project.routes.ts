@@ -4,6 +4,7 @@ import { requireRoles } from '../../middleware/roles.js'
 import {
   listProjects,
   addProject,
+  removeProject,
   listProjectMembers,
   addMemberToProject,
   removeMemberFromProject,
@@ -23,6 +24,13 @@ router.post(
   requireAuth,
   requireRoles('SUPER_ADMIN'),
   addProject,
+)
+
+router.delete(
+  '/:id',
+  requireAuth,
+  requireRoles('SUPER_ADMIN'),
+  removeProject,
 )
 
 router.get(

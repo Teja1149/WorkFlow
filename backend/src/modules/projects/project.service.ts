@@ -202,3 +202,27 @@ export async function removeProjectMember(
 
   return true
 }
+
+export async function deleteProject(
+  organizationId: string,
+  projectId: string,
+) {
+  // 1. Delete associated project members first
+  await supabaseAdmin
+    .from('project_members')
+    .delete()
+    .eq('project_id', projectId)
+
+  // 2. Delete project record
+  const { error } = await supabaseAdmin
+    .from('projects')
+    .delete()
+    .eq('organization_id', organizationId)
+    .eq('id', projectId)
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  return true
+}

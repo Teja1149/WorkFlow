@@ -1,8 +1,6 @@
 import type { UserProfile } from '../auth/auth.types'
 
-const API_URL =
-  import.meta.env.VITE_API_URL ||
-  'http://localhost:5000/api'
+const API_URL = import.meta.env.VITE_API_URL || '/api'
 
 export interface Project {
   id: string
@@ -92,6 +90,12 @@ export async function addProjectMember(token: string, projectId: string, userId:
 
 export async function removeProjectMember(token: string, projectId: string, userId: string) {
   return request(token, `/projects/${projectId}/members/${userId}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function deleteProject(token: string, projectId: string) {
+  return request(token, `/projects/${projectId}`, {
     method: 'DELETE',
   })
 }
