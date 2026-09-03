@@ -64,6 +64,28 @@ export async function createRecurringWorkTemplate(
     throw new Error('Invalid assignment mode.')
   }
 
+  // Validate project_id if provided at template creation time
+  if (input.project_id) {
+    const { data: project, error: projectError } = await supabaseAdmin
+      .from('projects')
+      .select('id')
+      .eq('id', input.project_id)
+      .eq('organization_id', organizationId)
+      .maybeSingle()
+
+    if (projectError) {
+      throw new Error(
+        `Unable to validate selected project: ${projectError.message}`,
+      )
+    }
+
+    if (!project) {
+      throw new Error(
+        'The selected project does not exist or does not belong to your organization.',
+      )
+    }
+  }
+
   const employees = await resolveEmployees(
     organizationId,
     input.assignment_mode,
@@ -158,12 +180,11 @@ export async function generateDailyRecurringWork(
   if (error) throw new Error(error.message)
 
   const generated: string[] = []
-  const warnings: string[] = []
-  let skippedCount = 0
-  let failedCount = 0
+  const skipped: string[] = []
+  const failed: string[] = []
 
   for (const template of templates || []) {
-    // 1. Validate template.project_id if present
+    // 1. Validate template.project_id before generating for employees
     if (template.project_id) {
       const { data: project, error: projectError } = await supabaseAdmin
         .from('projects')
@@ -173,18 +194,24 @@ export async function generateDailyRecurringWork(
         .maybeSingle()
 
       if (projectError) {
-        const msg = `Could not validate project for template "${template.title}" (${template.id}): ${projectError.message}`
-        console.error(`[RecurringWork] ${msg}`)
-        warnings.push(msg)
-        skippedCount++
+        console.error(
+          `[RecurringWork] Project validation failed for template "${template.title}" (${template.id}):`,
+          projectError.message,
+        )
+        skipped.push(
+          `${template.title}: project validation failed: ${projectError.message}`,
+        )
         continue
       }
 
       if (!project) {
-        const msg = `Skipping template "${template.title}" (${template.id}): project ${template.project_id} does not exist or belongs to another organization.`
-        console.warn(`[RecurringWork] ${msg}`)
-        warnings.push(msg)
-        skippedCount++
+        console.warn(
+          `[RecurringWork] Skipping template "${template.title}" (${template.id}): ` +
+          `project ${template.project_id} does not exist or belongs to another organization.`,
+        )
+        skipped.push(
+          `${template.title}: project ${template.project_id} is missing or invalid`,
+        )
         continue
       }
     }
@@ -198,213 +225,219 @@ export async function generateDailyRecurringWork(
     let templateGeneratedCount = 0
 
     for (const employee of employees) {
-      try {
-        const { data: existing, error: existingError } =
-          await supabaseAdmin
-            .from('work_items')
-            .select('id')
-            .eq('organization_id', template.organization_id)
-            .eq('recurring_template_id', template.id)
-            .eq('assigned_to', employee.id)
-            .eq('deadline', date)
-            .maybeSingle()
+      const { data: existing, error: existingError } =
+        await supabaseAdmin
+          .from('work_items')
+          .select('id')
+          .eq('organization_id', template.organization_id)
+          .eq('recurring_template_id', template.id)
+          .eq('assigned_to', employee.id)
+          .eq('deadline', date)
+          .maybeSingle()
 
-        if (existingError) {
-          console.error(
-            `[RecurringWork] Error checking existing work item for employee ${employee.id}:`,
-            existingError.message,
-          )
-          failedCount++
-          warnings.push(`Error checking existing work for employee ${employee.id}: ${existingError.message}`)
-          continue
-        }
+      if (existingError) {
+        console.error(
+          `[RecurringWork] Error checking existing work item for employee ${employee.id}:`,
+          existingError.message,
+        )
+        failed.push(
+          `${template.title}: employee ${employee.id}: ${existingError.message}`,
+        )
+        continue
+      }
 
-        if (existing) continue
+      if (existing) continue
 
-        const { data: work, error: workError } =
-          await supabaseAdmin
-            .from('work_items')
-            .insert({
-              organization_id: template.organization_id,
-              project_id: template.project_id,
-              assigned_to: employee.id,
-              created_by: template.created_by,
-              title: template.title,
-              description: template.description,
-              priority: template.priority || 'MEDIUM',
-              status: 'TODO',
-              deadline: date,
-              deadline_time: template.deadline_time,
-              original_deadline: date,
-              work_type_id: template.work_type_id,
-              module_id: template.module_id,
-              milestone_id: template.milestone_id,
-              recurring_template_id: template.id,
-              progress_percent: 0,
-              estimated_hours: 0,
-              actual_hours: 0,
-              carry_forward_count: 0,
-              escalation_level: 0,
-              health: 'GREEN',
-            })
-            .select()
-            .single()
-
-        if (workError) {
-          console.error(
-            `[RecurringWork] Failed to insert work item for template "${template.title}", employee ${employee.id}:`,
-            workError.message,
-          )
-          failedCount++
-          warnings.push(`Failed to insert work item for employee ${employee.id}: ${workError.message}`)
-          continue
-        }
-
-        // 2. Resolve Work Type & Allocation target values
-        let resolvedTargetType = 'COUNT'
-        let resolvedTargetValue = 1
-        let resolvedUnit = 'Units'
-
-        if (template.work_type_id) {
-          const { data: wt } = await supabaseAdmin
-            .from('work_types')
-            .select('description')
-            .eq('id', template.work_type_id)
-            .maybeSingle()
-
-          if (wt?.description && wt.description.trim().startsWith('{')) {
-            try {
-              const parsed = JSON.parse(wt.description)
-              if (parsed.unit) resolvedUnit = parsed.unit
-              if (parsed.measurement) {
-                if (parsed.measurement === 'STORY_POINTS') resolvedTargetType = 'POINTS'
-                else if (parsed.measurement === 'HOURS') resolvedTargetType = 'HOURS'
-                else if (parsed.measurement === 'PERCENTAGE') resolvedTargetType = 'PERCENTAGE'
-                else resolvedTargetType = 'COUNT'
-              }
-              if (parsed.default_target) resolvedTargetValue = Number(parsed.default_target)
-            } catch {
-              // ignore JSON parse error
-            }
-          }
-        }
-
-        // 3. Schema-aligned target-allocation lookup (project_targets -> project_target_allocations)
-        if (template.project_id) {
-          let targetQuery = supabaseAdmin
-            .from('project_targets')
-            .select('id, unit, target_type')
-            .eq('project_id', template.project_id)
-
-          if (template.work_type_id) {
-            targetQuery = targetQuery.eq('work_type_id', template.work_type_id)
-          }
-
-          const { data: projTargets } = await targetQuery
-
-          if (projTargets && projTargets.length > 0) {
-            const targetIds = projTargets.map((t) => t.id)
-            const { data: alloc } = await supabaseAdmin
-              .from('project_target_allocations')
-              .select('allocated_value, target_id')
-              .in('target_id', targetIds)
-              .eq('employee_id', employee.id)
-              .maybeSingle()
-
-            if (alloc) {
-              const matchedTarget = projTargets.find((t) => t.id === alloc.target_id) || projTargets[0]
-              if (matchedTarget?.unit) resolvedUnit = matchedTarget.unit
-              if (matchedTarget?.target_type) resolvedTargetType = matchedTarget.target_type
-              if (alloc.allocated_value) {
-                resolvedTargetValue = Math.max(1, Math.ceil(Number(alloc.allocated_value) / 20))
-              }
-            } else {
-              const pt = projTargets[0]
-              if (pt.unit) resolvedUnit = pt.unit
-              if (pt.target_type) resolvedTargetType = pt.target_type
-            }
-          }
-        }
-
-        // 4. Create today's daily target for the generated recurring work
-        const { error: targetError } = await supabaseAdmin
-          .from('daily_work_targets')
+      const { data: work, error: workError } =
+        await supabaseAdmin
+          .from('work_items')
           .insert({
             organization_id: template.organization_id,
-            employee_id: employee.id,
             project_id: template.project_id,
+            assigned_to: employee.id,
+            created_by: template.created_by,
+            title: template.title,
+            description: template.description,
+            priority: template.priority || 'MEDIUM',
+            status: 'TODO',
+            deadline: date,
+            deadline_time: template.deadline_time,
+            original_deadline: date,
+            work_type_id: template.work_type_id,
             module_id: template.module_id,
             milestone_id: template.milestone_id,
-            work_item_id: work.id,
-
-            title: template.title,
-            target_type: resolvedTargetType,
-            target_value: resolvedTargetValue,
-            unit: resolvedUnit,
-
-            deadline_date: date,
-            deadline_time: template.deadline_time,
-            priority: template.priority || 'MEDIUM',
-
-            status: 'OPEN',
-            actual_value: 0,
-            carry_forward_value: 0,
+            recurring_template_id: template.id,
+            progress_percent: 0,
+            estimated_hours: 0,
+            actual_hours: 0,
             carry_forward_count: 0,
-
-            created_by: template.created_by,
+            escalation_level: 0,
+            health: 'GREEN',
           })
+          .select()
+          .single()
 
-        if (targetError) {
-          console.error(
-            `[RecurringWork] Failed to insert daily target for work ${work.id}:`,
-            targetError.message,
-          )
-          warnings.push(`Failed to insert daily target for work ${work.id}: ${targetError.message}`)
-        }
-
-        await supabaseAdmin
-          .from('work_assignment_history')
-          .insert({
-            work_item_id: work.id,
-            organization_id: template.organization_id,
-            previous_assignee: null,
-            new_assignee: employee.id,
-            changed_by: template.created_by,
-            reason: `Daily recurring work: ${template.title}`,
-          })
-
-        await logActivity(
-          work.id,
-          template.created_by,
-          'WORK_ASSIGNED',
-          `Daily recurring work generated: ${template.title}`,
-        )
-
-        try {
-          await notifyStakeholders({
-            organizationId: template.organization_id,
-            title: 'Daily Work Assigned',
-            message: `"${template.title}" has been assigned to you for today.`,
-            type: 'WORK_ASSIGNED',
-            workItemId: work.id,
-            projectId: template.project_id,
-            authorUserId: template.created_by,
-            recipients: [employee.id],
-          })
-        } catch {
-          // Notification failure must not prevent generation.
-        }
-
-        generated.push(work.id)
-        templateGeneratedCount++
-      } catch (empErr: any) {
+      if (workError) {
         console.error(
-          `[RecurringWork] Unexpected error generating work for employee ${employee.id}:`,
-          empErr,
+          `[RecurringWork] Failed to generate "${template.title}" ` +
+          `for employee ${employee.id}:`,
+          workError.message,
         )
-        failedCount++
-        warnings.push(`Unexpected error for employee ${employee.id}: ${empErr?.message || empErr}`)
+        failed.push(
+          `${template.title}: employee ${employee.id}: ${workError.message}`,
+        )
+        continue
       }
+
+      // 2. Resolve Work Type target configuration
+      let resolvedTargetType = 'COUNT'
+      let resolvedTargetValue = 1
+      let resolvedUnit = 'Units'
+
+      if (template.work_type_id) {
+        const { data: wt } = await supabaseAdmin
+          .from('work_types')
+          .select('description')
+          .eq('id', template.work_type_id)
+          .maybeSingle()
+
+        if (wt?.description && wt.description.trim().startsWith('{')) {
+          try {
+            const parsed = JSON.parse(wt.description)
+            if (parsed.unit) resolvedUnit = parsed.unit
+            if (parsed.measurement) {
+              if (parsed.measurement === 'STORY_POINTS') resolvedTargetType = 'POINTS'
+              else if (parsed.measurement === 'HOURS') resolvedTargetType = 'HOURS'
+              else if (parsed.measurement === 'PERCENTAGE') resolvedTargetType = 'PERCENTAGE'
+              else resolvedTargetType = 'COUNT'
+            }
+            if (parsed.default_target) resolvedTargetValue = Number(parsed.default_target)
+          } catch {
+            // ignore JSON parse error
+          }
+        }
+      }
+
+      // 3. Schema-aligned target-allocation lookup (project_target_allocations -> project_targets -> project_id)
+      if (template.project_id) {
+        const { data: allocations, error: allocationError } =
+          await supabaseAdmin
+            .from('project_target_allocations')
+            .select(`
+              allocated_value,
+              project_targets!inner(
+                project_id,
+                unit,
+                target_type
+              )
+            `)
+            .eq('employee_id', employee.id)
+            .eq('project_targets.project_id', template.project_id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+
+        if (allocationError) {
+          console.error(
+            `[RecurringWork] Failed to load project target allocation for ` +
+            `employee ${employee.id}, project ${template.project_id}:`,
+            allocationError.message,
+          )
+        } else {
+          const alloc = allocations?.[0]
+
+          if (alloc) {
+            const pt = Array.isArray(alloc.project_targets)
+              ? alloc.project_targets[0]
+              : alloc.project_targets
+
+            if (pt?.unit) {
+              resolvedUnit = pt.unit
+            }
+
+            if (pt?.target_type) {
+              resolvedTargetType = pt.target_type
+            }
+
+            if (alloc.allocated_value != null) {
+              resolvedTargetValue = Math.max(
+                1,
+                Math.ceil(Number(alloc.allocated_value) / 20),
+              )
+            }
+          }
+        }
+      }
+
+      // 4. Create today's daily target for the generated recurring work
+      const { error: targetError } = await supabaseAdmin
+        .from('daily_work_targets')
+        .insert({
+          organization_id: template.organization_id,
+          employee_id: employee.id,
+          project_id: template.project_id,
+          module_id: template.module_id,
+          milestone_id: template.milestone_id,
+          work_item_id: work.id,
+
+          title: template.title,
+          target_type: resolvedTargetType,
+          target_value: resolvedTargetValue,
+          unit: resolvedUnit,
+
+          deadline_date: date,
+          deadline_time: template.deadline_time,
+          priority: template.priority || 'MEDIUM',
+
+          status: 'OPEN',
+          actual_value: 0,
+          carry_forward_value: 0,
+          carry_forward_count: 0,
+
+          created_by: template.created_by,
+        })
+
+      if (targetError) {
+        console.error(
+          `[RecurringWork] Failed to insert daily target for work ${work.id}:`,
+          targetError.message,
+        )
+      }
+
+      await supabaseAdmin
+        .from('work_assignment_history')
+        .insert({
+          work_item_id: work.id,
+          organization_id: template.organization_id,
+          previous_assignee: null,
+          new_assignee: employee.id,
+          changed_by: template.created_by,
+          reason: `Daily recurring work: ${template.title}`,
+        })
+
+      await logActivity(
+        work.id,
+        template.created_by,
+        'WORK_ASSIGNED',
+        `Daily recurring work generated: ${template.title}`,
+      )
+
+      try {
+        await notifyStakeholders({
+          organizationId: template.organization_id,
+          title: 'Daily Work Assigned',
+          message: `"${template.title}" has been assigned to you for today.`,
+          type: 'WORK_ASSIGNED',
+          workItemId: work.id,
+          projectId: template.project_id,
+          authorUserId: template.created_by,
+          recipients: [employee.id],
+        })
+      } catch {
+        // Notification failure must not prevent generation.
+      }
+
+      generated.push(work.id)
+      templateGeneratedCount++
     }
 
     if (templateGeneratedCount > 0) {
@@ -421,9 +454,10 @@ export async function generateDailyRecurringWork(
   return {
     date,
     generatedCount: generated.length,
-    skippedCount,
-    failedCount,
+    skippedCount: skipped.length,
+    failedCount: failed.length,
     workItemIds: generated,
-    warnings,
+    warnings: skipped,
+    failures: failed,
   }
 }
