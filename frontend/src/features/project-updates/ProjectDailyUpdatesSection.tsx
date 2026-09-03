@@ -202,10 +202,19 @@ export default function ProjectDailyUpdatesSection({ projectId }: Props) {
     setFormError('')
 
     try {
+      const payloadValues: Record<string, any> = { ...fieldValues }
+      for (const f of sortedFields) {
+        const val = fieldValues[f.id] ?? fieldValues[f.field_key || '']
+        if (val !== undefined && val !== null) {
+          if (f.id) payloadValues[f.id] = val
+          if (f.field_key) payloadValues[f.field_key] = val
+        }
+      }
+
       await submitProjectDailyUpdate(accessToken, projectId, {
         paragraphUpdate,
         progressPercent: Number(progressPercent),
-        values: fieldValues,
+        values: payloadValues,
       })
 
       setFormSuccess('Daily update submitted successfully!')
@@ -243,6 +252,24 @@ export default function ProjectDailyUpdatesSection({ projectId }: Props) {
     )
   }, [updates, profile, todayStr])
 
+  function findFieldValue(upd: ProjectDailyUpdate, field: ProjectUpdateField): string {
+    if (!upd) return ''
+    const valList = upd.values || (upd as any).project_daily_update_values || []
+    if (!Array.isArray(valList) || valList.length === 0) return ''
+
+    const matched = valList.find(
+      (v: any) =>
+        v.field_id === field.id ||
+        (field.field_key && v.field_id === field.field_key) ||
+        (v.project_update_fields &&
+          (v.project_update_fields.field_key === field.field_key ||
+            v.project_update_fields.field_name?.toLowerCase().trim() ===
+              field.field_name?.toLowerCase().trim())),
+    )
+
+    return matched?.value_text ?? ''
+  }
+
   // Prefill form values if employee has already submitted today's report
   useEffect(() => {
     if (myTodayUpdate) {
@@ -251,13 +278,17 @@ export default function ProjectDailyUpdatesSection({ projectId }: Props) {
 
       if (myTodayUpdate.values && myTodayUpdate.values.length > 0) {
         const vals: Record<string, any> = {}
-        for (const v of myTodayUpdate.values) {
-          vals[v.field_id] = v.value_text
+        for (const f of sortedFields) {
+          const val = findFieldValue(myTodayUpdate, f)
+          if (val) {
+            vals[f.id] = val
+            if (f.field_key) vals[f.field_key] = val
+          }
         }
         setFieldValues(vals)
       }
     }
-  }, [myTodayUpdate])
+  }, [myTodayUpdate, sortedFields])
 
   // Extract unique employees for manager chip filter
   const uniqueEmployees = useMemo(() => {
@@ -274,132 +305,98 @@ export default function ProjectDailyUpdatesSection({ projectId }: Props) {
     return Array.from(map.values())
   }, [updates])
 
-  // Dynamic Per-Column Filters
+  // Dynamic Column Filters (key -> ColumnFilterRule)
   const [columnFilters, setColumnFilters] = useState<Record<string, ColumnFilterRule>>({})
   const [activeFilterPopover, setActiveFilterPopover] = useState<string | null>(null)
 
-  function evaluateColumnFilter(
-    upd: ProjectDailyUpdate,
-    rule: ColumnFilterRule,
-  ): boolean {
-    let rawVal = ''
-
-    if (rule.columnId === 'date') {
-      rawVal = upd.update_date ? upd.update_date.slice(0, 10) : ''
-    } else if (rule.columnId === 'employee') {
-      rawVal = upd.profiles
-        ? `${upd.profiles.first_name} ${upd.profiles.last_name || ''}`.trim()
-        : 'Employee'
-    } else if (rule.columnId === 'progress') {
-      rawVal = String(upd.progress_percent ?? 0)
-    } else if (rule.columnId === 'summary') {
-      rawVal = upd.paragraph_update || ''
-    } else {
-      const matched = upd.values?.find((v) => v.field_id === rule.columnId)
-      rawVal = matched?.value_text || ''
-    }
-
-    const isNum = rule.fieldType === 'NUMBER' || rule.fieldType === 'BUILTIN_NUMBER'
-    const isDate = rule.fieldType === 'DATE' || rule.fieldType === 'BUILTIN_DATE'
-    const isBool = rule.fieldType === 'BOOLEAN'
-
-    if (isBool) {
-      const isTrueVal = rawVal === 'true' || rawVal === '1' || rawVal === 'Yes'
-      return rule.operator === 'is_true' ? isTrueVal : !isTrueVal
-    }
-
-    if (isNum) {
-      const num = Number(rawVal)
-      const v1 = Number(rule.value)
-      const v2 = Number(rule.value2)
-
-      if (isNaN(num)) return false
-
-      switch (rule.operator) {
-        case 'gt':
-          return num > v1
-        case 'gte':
-          return num >= v1
-        case 'lt':
-          return num < v1
-        case 'lte':
-          return num <= v1
-        case 'equals':
-          return num === v1
-        case 'between':
-          return num >= v1 && num <= v2
-        default:
-          return true
-      }
-    }
-
-    if (isDate) {
-      const dateStr = rawVal.slice(0, 10)
-      const v1 = rule.value
-      const v2 = rule.value2 || ''
-
-      switch (rule.operator) {
-        case 'equals':
-          return dateStr === v1
-        case 'before':
-          return dateStr < v1
-        case 'after':
-          return dateStr > v1
-        case 'between':
-          return dateStr >= v1 && dateStr <= v2
-        default:
-          return true
-      }
-    }
-
-    // Text types (contains, equals, starts_with)
-    const text = rawVal.toLowerCase()
-    const target = rule.value.toLowerCase()
-
-    switch (rule.operator) {
-      case 'equals':
-        return text === target
-      case 'starts_with':
-        return text.startsWith(target)
-      case 'contains':
-      default:
-        return text.includes(target)
-    }
+  function updateColumnFilter(fieldKey: string, rule: ColumnFilterRule) {
+    setColumnFilters((prev) => ({
+      ...prev,
+      [fieldKey]: rule,
+    }))
   }
 
-  // Filter updates based on search query, employee, date range, and dynamic column filters
+  function clearAllFilters() {
+    setSelectedEmployee('')
+    setFromDate('')
+    setToDate('')
+    setSearchQuery('')
+    setColumnFilters({})
+  }
+
+  // Filter updates based on employee, date range, search, and template fields
   const filteredUpdates = useMemo(() => {
-    return updates.filter((upd) => {
-      if (selectedEmployee && upd.employee_id !== selectedEmployee && upd.profiles?.id !== selectedEmployee) {
+    return updates.filter((update) => {
+      if (
+        selectedEmployee &&
+        update.employee_id !== selectedEmployee &&
+        update.profiles?.id !== selectedEmployee
+      ) {
         return false
       }
-      if (fromDate && upd.update_date.slice(0, 10) < fromDate) return false
-      if (toDate && upd.update_date.slice(0, 10) > toDate) return false
+
+      if (fromDate && update.update_date.slice(0, 10) < fromDate) {
+        return false
+      }
+
+      if (toDate && update.update_date.slice(0, 10) > toDate) {
+        return false
+      }
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim()
-        const empName = upd.profiles
-          ? `${upd.profiles.first_name} ${upd.profiles.last_name || ''}`.toLowerCase()
+        const empName = update.profiles
+          ? `${update.profiles.first_name} ${update.profiles.last_name || ''}`.toLowerCase()
           : ''
-        const summary = (upd.paragraph_update || '').toLowerCase()
-        const valuesText = (upd.values || []).map((v) => (v.value_text || '').toLowerCase()).join(' ')
+        const summary = (update.paragraph_update || '').toLowerCase()
+        const valuesText = (update.values || []).map((v) => (v.value_text || '').toLowerCase()).join(' ')
 
         if (!empName.includes(q) && !summary.includes(q) && !valuesText.includes(q)) {
           return false
         }
       }
 
-      // Dynamic Column Filters (AND logic)
-      const rules = Object.values(columnFilters)
-      for (const rule of rules) {
-        if (!evaluateColumnFilter(upd, rule)) {
+      if (columnFilters['date']?.value) {
+        const dVal = columnFilters['date'].value
+        if (!update.update_date.startsWith(dVal)) return false
+      }
+
+      if (columnFilters['employee']?.value) {
+        const empVal = columnFilters['employee'].value.toLowerCase()
+        const empName = update.profiles
+          ? `${update.profiles.first_name} ${update.profiles.last_name || ''}`.toLowerCase()
+          : ''
+        if (!empName.includes(empVal)) return false
+      }
+
+      if (columnFilters['progress']?.value) {
+        const progVal = Number(columnFilters['progress'].value)
+        if (!isNaN(progVal) && Number(update.progress_percent || 0) < progVal) return false
+      }
+
+      if (columnFilters['summary']?.value) {
+        const sumVal = columnFilters['summary'].value.toLowerCase()
+        const summary = (update.paragraph_update || '').toLowerCase()
+        if (!summary.includes(sumVal)) return false
+      }
+
+      for (const field of template?.fields || []) {
+        const key = field.field_key || field.id
+        const filterRule = columnFilters[key]
+
+        if (!filterRule || !filterRule.value) continue
+
+        const filterValue = filterRule.value
+        const actualValue = findFieldValue(update, field)
+
+        if (!actualValue.toLowerCase().includes(filterValue.toLowerCase())) {
           return false
         }
       }
 
       return true
     })
-  }, [updates, selectedEmployee, searchQuery, fromDate, toDate, columnFilters])
+  }, [updates, selectedEmployee, searchQuery, fromDate, toDate, columnFilters, template])
 
   // Export to Excel / CSV function
   const handleExportExcel = () => {
@@ -419,8 +416,8 @@ export default function ProjectDailyUpdatesSection({ projectId }: Props) {
         : 'Employee'
       const dateStr = new Date(upd.update_date).toLocaleDateString()
       const fieldVals = sortedFields.map((f) => {
-        const matched = upd.values?.find((v) => v.field_id === f.id)
-        return `"${(matched?.value_text || '-').replace(/"/g, '""')}"`
+        const val = findFieldValue(upd, f) || '-'
+        return `"${val.replace(/"/g, '""')}"`
       })
       const summary = `"${(upd.paragraph_update || '-').replace(/"/g, '""')}"`
 
@@ -729,161 +726,117 @@ export default function ProjectDailyUpdatesSection({ projectId }: Props) {
               </button>
             </div>
 
-            {/* Filter & Search Bar */}
-            <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-3 text-xs w-full md:w-auto">
-                <div className="relative flex-1 md:w-64">
-                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                  <input
-                    type="text"
-                    placeholder="Search employee, summary..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs outline-none focus:border-[#801424] font-semibold text-slate-900"
-                  />
+            {/* Dynamic Filters UI (Steps 3 & 4) */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Filter Updates
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Filter the project updates using any available field.
+                  </p>
                 </div>
 
-                <div className="flex items-center gap-1.5">
-                  <span className="text-slate-700 font-bold">From:</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
+                    Showing {filteredUpdates.length} of {updates.length} updates
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearAllFilters}
+                    className="text-xs font-semibold text-[#801424] hover:underline cursor-pointer"
+                  >
+                    Clear all
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    From Date
+                  </label>
                   <input
                     type="date"
                     value={fromDate}
                     onChange={(e) => setFromDate(e.target.value)}
-                    className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs outline-none focus:border-[#801424] font-semibold text-slate-900"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-zinc-800"
                   />
                 </div>
 
-                <div className="flex items-center gap-1.5">
-                  <span className="text-slate-700 font-bold">To:</span>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    To Date
+                  </label>
                   <input
                     type="date"
                     value={toDate}
                     onChange={(e) => setToDate(e.target.value)}
-                    className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs outline-none focus:border-[#801424] font-semibold text-slate-900"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-zinc-800"
                   />
                 </div>
 
-                {(fromDate || toDate || selectedEmployee || searchQuery) && (
-                  <button
-                    onClick={() => {
-                      setFromDate('')
-                      setToDate('')
-                      setSelectedEmployee('')
-                      setSearchQuery('')
-                    }}
-                    className="text-xs text-[#801424] font-bold hover:underline cursor-pointer ml-auto md:ml-0"
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    Employee
+                  </label>
+                  <select
+                    value={selectedEmployee}
+                    onChange={(e) => setSelectedEmployee(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-zinc-800 bg-white"
                   >
-                    Clear Filters
-                  </button>
-                )}
+                    <option value="">All Employees</option>
+                    {uniqueEmployees.map((emp) => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {(template?.fields || []).map((field) => {
+                  const key = field.field_key || field.id
+                  return (
+                    <div key={field.id}>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">
+                        {field.field_name}
+                      </label>
+                      <input
+                        type={
+                          field.field_type === 'NUMBER'
+                            ? 'number'
+                            : field.field_type === 'DATE'
+                              ? 'date'
+                              : 'text'
+                        }
+                        value={columnFilters[key]?.value || ''}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          if (!val) {
+                            setColumnFilters((prev) => {
+                              const copy = { ...prev }
+                              delete copy[key]
+                              return copy
+                            })
+                          } else {
+                            updateColumnFilter(key, {
+                              columnId: key,
+                              columnName: field.field_name,
+                              fieldType: field.field_type as any,
+                              operator: 'contains',
+                              value: val,
+                            })
+                          }
+                        }}
+                        placeholder={`Filter ${field.field_name}`}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-zinc-800"
+                      />
+                    </div>
+                  )
+                })}
               </div>
             </div>
-
-            {/* Employee Filter Chips */}
-            {uniqueEmployees.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <span className="text-xs font-black text-slate-800 mr-1 flex items-center gap-1">
-                  <User size={13} />
-                  Employees:
-                </span>
-                <button
-                  onClick={() => setSelectedEmployee('')}
-                  className={`px-3 py-1.5 rounded-full text-xs font-bold cursor-pointer transition ${
-                    !selectedEmployee
-                      ? 'bg-[#801424] text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
-                  }`}
-                >
-                  All ({updates.length})
-                </button>
-
-                {uniqueEmployees.map((emp) => {
-                  const empCount = updates.filter(
-                    (u) => (u.employee_id === emp.id || u.profiles?.id === emp.id),
-                  ).length
-                  return (
-                    <button
-                      key={emp.id}
-                      onClick={() => setSelectedEmployee(emp.id)}
-                      className={`px-3 py-1.5 rounded-full text-xs font-bold cursor-pointer transition ${
-                        selectedEmployee === emp.id
-                          ? 'bg-[#801424] text-white shadow-xs'
-                          : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
-                      }`}
-                    >
-                      {emp.name} ({empCount})
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-
-            {/* Active Column Filters Bar */}
-            {Object.keys(columnFilters).length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200/80 p-3.5 rounded-2xl text-xs">
-                <span className="font-black text-slate-900 mr-1 flex items-center gap-1.5">
-                  <Filter size={13} className="text-[#801424]" />
-                  Active Filters:
-                </span>
-
-                {Object.values(columnFilters).map((rule) => {
-                  let label = `${rule.columnName}: ${rule.value}`
-                  if (rule.operator === 'between') {
-                    label = `${rule.columnName}: ${rule.value} to ${rule.value2 || ''}`
-                  } else if (rule.operator === 'gt') {
-                    label = `${rule.columnName} > ${rule.value}`
-                  } else if (rule.operator === 'gte') {
-                    label = `${rule.columnName} >= ${rule.value}`
-                  } else if (rule.operator === 'lt') {
-                    label = `${rule.columnName} < ${rule.value}`
-                  } else if (rule.operator === 'lte') {
-                    label = `${rule.columnName} <= ${rule.value}`
-                  } else if (rule.operator === 'is_true') {
-                    label = `${rule.columnName}: True`
-                  } else if (rule.operator === 'is_false') {
-                    label = `${rule.columnName}: False`
-                  } else if (rule.operator === 'contains') {
-                    label = `${rule.columnName} contains "${rule.value}"`
-                  } else if (rule.operator === 'starts_with') {
-                    label = `${rule.columnName} starts with "${rule.value}"`
-                  } else if (rule.operator === 'before') {
-                    label = `${rule.columnName} before ${rule.value}`
-                  } else if (rule.operator === 'after') {
-                    label = `${rule.columnName} after ${rule.value}`
-                  }
-
-                  return (
-                    <span
-                      key={rule.columnId}
-                      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#801424] text-white font-bold text-[11px] shadow-2xs"
-                    >
-                      <span>{label}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setColumnFilters((prev) => {
-                            const copy = { ...prev }
-                            delete copy[rule.columnId]
-                            return copy
-                          })
-                        }}
-                        className="hover:text-rose-200 p-0.5 rounded transition cursor-pointer"
-                      >
-                        <X size={12} />
-                      </button>
-                    </span>
-                  )
-                })}
-
-                <button
-                  type="button"
-                  onClick={() => setColumnFilters({})}
-                  className="text-xs font-bold text-[#801424] hover:underline ml-auto cursor-pointer"
-                >
-                  Clear All Filters
-                </button>
-              </div>
-            )}
 
             {/* Matrix Table */}
             {loading ? (
@@ -1147,12 +1100,10 @@ export default function ProjectDailyUpdatesSection({ projectId }: Props) {
 
                           {/* Dynamic Field Values */}
                           {sortedFields.map((f) => {
-                            const matchedVal = upd.values?.find(
-                              (v) => v.field_id === f.id,
-                            )
+                            const val = findFieldValue(upd, f)
                             return (
                               <td key={f.id || f.field_key} className="p-3.5 font-mono font-bold text-slate-900">
-                                {matchedVal?.value_text || '-'}
+                                {val || '-'}
                               </td>
                             )
                           })}

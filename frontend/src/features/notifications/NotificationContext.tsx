@@ -16,12 +16,20 @@ import {
 import { playNotificationSound, unlockNotificationSound } from './notification.sound'
 import { supabase } from '../../lib/supabase'
 
+interface ToastItem {
+  id: string
+  title: string
+  message: string
+  type: string
+}
+
 interface NotificationContextType {
   notifications: NotificationItem[]
   unreadCount: number
   refreshNotifications: () => Promise<void>
   markRead: (id: string) => Promise<void>
   markAllRead: () => Promise<void>
+  playTestSound: () => void
 }
 
 const NotificationContext = createContext<NotificationContextType | undefined>(
@@ -37,8 +45,23 @@ export function NotificationProvider({
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [unreadCount, setUnreadCount] = useState<number>(0)
+  const [activeToast, setActiveToast] = useState<ToastItem | null>(null)
   const previousUnread = useRef<number>(0)
   const isInitialized = useRef<boolean>(false)
+
+  function playTestSound() {
+    unlockNotificationSound()
+    playNotificationSound()
+    setActiveToast({
+      id: String(Date.now()),
+      title: 'Sound Test',
+      message: 'Notification chime is working properly!',
+      type: 'SYSTEM',
+    })
+    setTimeout(() => {
+      setActiveToast(null)
+    }, 4000)
+  }
 
   useEffect(() => {
     const unlock = () => {
@@ -73,6 +96,18 @@ export function NotificationProvider({
 
       if (isInitialized.current && newCount > previousUnread.current) {
         playNotificationSound()
+        const latest = notificationData[0]
+        if (latest) {
+          setActiveToast({
+            id: latest.id,
+            title: latest.title,
+            message: latest.message,
+            type: latest.type,
+          })
+          setTimeout(() => {
+            setActiveToast(null)
+          }, 5000)
+        }
       }
 
       setNotifications(notificationData)
@@ -132,8 +167,20 @@ export function NotificationProvider({
           table: 'notifications',
           filter: `user_id=eq.${profile.id}`,
         },
-        () => {
+        (payload) => {
           playNotificationSound()
+          const newNotif = payload.new as NotificationItem
+          if (newNotif) {
+            setActiveToast({
+              id: newNotif.id,
+              title: newNotif.title,
+              message: newNotif.message,
+              type: newNotif.type,
+            })
+            setTimeout(() => {
+              setActiveToast(null)
+            }, 5000)
+          }
           void refreshNotifications()
         },
       )
@@ -150,7 +197,7 @@ export function NotificationProvider({
      */
     const interval = window.setInterval(() => {
       void refreshNotifications()
-    }, 10000)
+    }, 5000)
 
     return () => {
       window.clearInterval(interval)
@@ -166,9 +213,31 @@ export function NotificationProvider({
         refreshNotifications,
         markRead,
         markAllRead,
+        playTestSound,
       }}
     >
       {children}
+
+      {/* Floating In-App Toast Banner */}
+      {activeToast && (
+        <div className="fixed top-5 right-5 z-50 max-w-sm w-full bg-slate-900 text-white rounded-2xl p-4 shadow-2xl border border-slate-700/80 flex items-start justify-between gap-3 animate-in fade-in slide-in-from-top-3 duration-300">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+              <h4 className="font-bold text-sm text-white">{activeToast.title}</h4>
+            </div>
+            <p className="text-xs text-slate-300 line-clamp-2 leading-relaxed">
+              {activeToast.message}
+            </p>
+          </div>
+          <button
+            onClick={() => setActiveToast(null)}
+            className="text-slate-400 hover:text-white p-1 rounded-lg transition"
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </NotificationContext.Provider>
   )
 }

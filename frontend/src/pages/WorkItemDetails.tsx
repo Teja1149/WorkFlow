@@ -7,15 +7,18 @@ import {
   User,
   AlertTriangle,
   Send,
+  Target,
   TrendingUp,
   AlertCircle,
   X,
   CheckCircle2,
+  MessageSquare,
 } from 'lucide-react'
 import { useAuth } from '../features/auth/AuthContext'
 import {
   getWorkItems,
   updateWorkItem,
+  updateWorkItemStatus,
   getWorkComments,
   addWorkComment,
   getWorkUpdates,
@@ -23,13 +26,28 @@ import {
   getWorkConcerns,
   addWorkConcern,
   resolveWorkConcern,
+  getWorkAssignmentHistory,
   type WorkItem,
+  type WorkAssignmentHistory,
 } from '../features/work-items/work-item.service'
+import { getEmployees } from '../features/employees/employee.service'
+import type { UserProfile } from '../features/auth/auth.types'
+import { getWorkTypes } from '../features/work-types/work-type.service'
+import type { WorkType } from '../features/work-types/work-type.types'
 import type {
   WorkComment,
   WorkUpdate,
   WorkConcern,
 } from '../features/work-items/work-communication.service'
+import WorkDependenciesSection from '../features/work-dependencies/WorkDependenciesSection'
+import DeadlineCountdown from '../features/work-execution/DeadlineCountdown'
+import {
+  getOrganizationWorkSettings,
+  type OrganizationWorkSettings,
+} from '../features/organization-settings/organization-setting.service'
+import { getEmployeeDailyTargets } from '../features/daily-targets/daily-target.service'
+import StatusBadge from '../components/ui/StatusBadge'
+import HealthBadge from '../components/ui/HealthBadge'
 
 export default function WorkItemDetails() {
   const { id: workItemId } = useParams<{ id: string }>()
@@ -37,9 +55,12 @@ export default function WorkItemDetails() {
   const { accessToken, profile } = useAuth()
 
   const [workItem, setWorkItem] = useState<WorkItem | null>(null)
+  const [workTypes, setWorkTypes] = useState<WorkType[]>([])
   const [comments, setComments] = useState<WorkComment[]>([])
   const [updates, setUpdates] = useState<WorkUpdate[]>([])
   const [concerns, setConcerns] = useState<WorkConcern[]>([])
+  const [settings, setSettings] = useState<OrganizationWorkSettings | null>(null)
+  const [linkedDailyTarget, setLinkedDailyTarget] = useState<any | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -47,35 +68,66 @@ export default function WorkItemDetails() {
   const [newComment, setNewComment] = useState('')
   const [commentSubmitting, setCommentSubmitting] = useState(false)
 
-  const [updateText, setUpdateText] = useState('')
-  const [progressPercent, setProgressPercent] = useState(50)
+  const [workedToday, setWorkedToday] = useState('')
+  const [completedWork, setCompletedWork] = useState('')
+  const [blockersNextSteps, setBlockersNextSteps] = useState('')
   const [updateSubmitting, setUpdateSubmitting] = useState(false)
-  const [showProgressModal, setShowProgressModal] = useState(false)
+  const [showUpdateModal, setShowUpdateModal] = useState(false)
 
   const [concernText, setConcernText] = useState('')
+  const [concernPriority, setConcernPriority] = useState<'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'>('MEDIUM')
   const [showConcernModal, setShowConcernModal] = useState(false)
   const [concernSubmitting, setConcernSubmitting] = useState(false)
+
+  // Reassignment & History state (Steps 143 & 145)
+  const [assignmentHistory, setAssignmentHistory] = useState<WorkAssignmentHistory[]>([])
+  const [employees, setEmployees] = useState<UserProfile[]>([])
+  const [showReassignModal, setShowReassignModal] = useState(false)
+  const [reassignEmployeeId, setReassignEmployeeId] = useState('')
+  const [reassignReason, setReassignReason] = useState('')
+  const [reassignSubmitting, setReassignSubmitting] = useState(false)
+
+  const canManage =
+    profile?.role === 'SUPER_ADMIN' ||
+    profile?.role === 'ADMIN' ||
+    profile?.role === 'MANAGER'
 
   async function loadAllData() {
     if (!accessToken || !workItemId) return
     setLoading(true)
     setError('')
     try {
-      const [allItems, comList, upList, conList] = await Promise.all([
+      const [allItems, comList, upList, conList, wtList, histList, empList, workSettings] = await Promise.all([
         getWorkItems(accessToken),
         getWorkComments(accessToken, workItemId).catch(() => []),
         getWorkUpdates(accessToken, workItemId).catch(() => []),
         getWorkConcerns(accessToken, workItemId).catch(() => []),
+        getWorkTypes(accessToken).catch(() => []),
+        getWorkAssignmentHistory(accessToken, workItemId).catch(() => []),
+        getEmployees(accessToken).catch(() => []),
+        getOrganizationWorkSettings(accessToken).catch(() => null),
       ])
+
+      setWorkTypes(wtList)
+      setAssignmentHistory(histList)
+      setEmployees(empList)
+      setSettings(workSettings)
 
       const found = allItems.find((w) => w.id === workItemId)
       if (found) {
         setWorkItem(found)
-        // Compute last progress if available
-        if (upList.length > 0) {
-          setProgressPercent(upList[0].progress_percent)
-        } else {
-          setProgressPercent(found.status === 'DONE' ? 100 : found.status === 'IN_PROGRESS' ? 50 : 0)
+
+        // Check if there is a daily target linked to this work item
+        if (found.assigned_to) {
+          try {
+            const targets = await getEmployeeDailyTargets(accessToken, found.assigned_to)
+            const linked = targets.find((t: any) => t.work_item_id === found.id)
+            if (linked) {
+              setLinkedDailyTarget(linked)
+            }
+          } catch {
+            // Ignore target load failure
+          }
         }
       }
       setComments(comList)
@@ -92,6 +144,19 @@ export default function WorkItemDetails() {
     loadAllData()
   }, [accessToken, workItemId])
 
+  // Step 414F — Add explicit Start Work action
+  async function handleStartWork() {
+    if (!accessToken || !workItemId) return
+    try {
+      await updateWorkItem(accessToken, workItemId, {
+        status: 'IN_PROGRESS',
+      })
+      await loadAllData()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Unable to start work.')
+    }
+  }
+
   async function handleAddComment(e: React.FormEvent) {
     e.preventDefault()
     if (!accessToken || !workItemId || !newComment.trim()) return
@@ -107,27 +172,30 @@ export default function WorkItemDetails() {
     }
   }
 
-  async function handleAddUpdate(e: React.FormEvent) {
-    e.preventDefault()
-    if (!accessToken || !workItemId || !updateText.trim()) return
+  // 3-field Work Update submission
+  async function handleAddUpdate(e?: React.FormEvent) {
+    if (e) e.preventDefault()
+    if (!accessToken || !workItemId || !workedToday.trim()) return
+    if (workItem?.status === 'BLOCKED') {
+      alert('This work is currently on hold. Resolve the blocker before posting an update.')
+      return
+    }
     setUpdateSubmitting(true)
     try {
-      const created = await addWorkUpdate(accessToken, workItemId, {
-        update_text: updateText.trim(),
-        progress_percent: progressPercent,
-      })
-      setUpdates((prev) => [created, ...prev])
-      setUpdateText('')
-      setShowProgressModal(false)
+      const parts = [
+        `What did you work on today?\n${workedToday.trim()}`,
+        completedWork.trim() ? `What is completed?\n${completedWork.trim()}` : '',
+        blockersNextSteps.trim() ? `Any blocker / next step?\n${blockersNextSteps.trim()}` : '',
+      ].filter(Boolean)
 
-      // Also update status if progress is 100%
-      if (progressPercent === 100 && workItem?.status !== 'DONE') {
-        const updated = await updateWorkItem(accessToken, workItemId, { status: 'DONE' })
-        setWorkItem((prev) => (prev ? { ...prev, ...updated } : prev))
-      } else if (progressPercent > 0 && workItem?.status === 'TODO') {
-        const updated = await updateWorkItem(accessToken, workItemId, { status: 'IN_PROGRESS' })
-        setWorkItem((prev) => (prev ? { ...prev, ...updated } : prev))
-      }
+      await addWorkUpdate(accessToken, workItemId, {
+        update_text: parts.join('\n\n'),
+      })
+      setWorkedToday('')
+      setCompletedWork('')
+      setBlockersNextSteps('')
+      setShowUpdateModal(false)
+      await loadAllData()
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to post update.')
     } finally {
@@ -140,9 +208,13 @@ export default function WorkItemDetails() {
     if (!accessToken || !workItemId || !concernText.trim()) return
     setConcernSubmitting(true)
     try {
-      const created = await addWorkConcern(accessToken, workItemId, { concern: concernText.trim() })
+      const created = await addWorkConcern(accessToken, workItemId, {
+        concern: concernText.trim(),
+        priority: concernPriority,
+      })
       setConcerns((prev) => [created, ...prev])
       setConcernText('')
+      setConcernPriority('MEDIUM')
       setShowConcernModal(false)
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to report concern.')
@@ -166,8 +238,9 @@ export default function WorkItemDetails() {
   async function handleStatusChange(newStatus: WorkItem['status']) {
     if (!accessToken || !workItemId) return
     try {
-      const updated = await updateWorkItem(accessToken, workItemId, { status: newStatus })
+      const updated = await updateWorkItemStatus(accessToken, workItemId, newStatus)
       setWorkItem((prev) => (prev ? { ...prev, ...updated } : prev))
+      await loadAllData()
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to update status.')
     }
@@ -213,6 +286,99 @@ export default function WorkItemDetails() {
 
       {/* Main Header Card */}
       <div className="bg-white border border-slate-200/80 rounded-2xl p-7 shadow-xs space-y-6">
+        {/* Step 251 — Hierarchical Breadcrumb Header */}
+        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500 pb-3 border-b border-slate-100">
+          {workItem.projects && (
+            <button
+              onClick={() => navigate(`/projects/${workItem.project_id}`)}
+              className="text-[#801424] font-bold hover:underline cursor-pointer"
+            >
+              {workItem.projects.name} ({workItem.projects.project_key})
+            </button>
+          )}
+
+          {(workItem.project_modules || workItem.module) && (
+            <>
+              <span className="text-slate-300">/</span>
+              <span className="text-slate-800 font-medium">
+                {(workItem.project_modules || workItem.module)?.name}
+              </span>
+            </>
+          )}
+
+          {(workItem.project_milestones || workItem.milestone) && (
+            <>
+              <span className="text-slate-300">/</span>
+              <span className="text-slate-800 font-medium">
+                {(workItem.project_milestones || workItem.milestone)?.name}
+              </span>
+            </>
+          )}
+
+          {((workItem as any).sprints || (workItem as any).sprint) && (
+            <>
+              <span className="text-slate-300">/</span>
+              <span className="text-slate-800 font-medium">
+                {((workItem as any).sprints || (workItem as any).sprint)?.name}
+              </span>
+            </>
+          )}
+
+          <span className="text-slate-300">/</span>
+          <span className="text-slate-900 font-bold">
+            {workItem.title}
+          </span>
+        </div>
+
+        {/* Step 179 — TODAY'S TARGET OVERVIEW */}
+        {linkedDailyTarget && (
+          <div className="rounded-2xl border border-[#801424]/20 bg-rose-50/40 p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Target className="h-4 w-4 text-[#801424]" />
+                <span className="text-xs font-bold uppercase tracking-wider text-[#801424] font-mono">
+                  TODAY'S TARGET
+                </span>
+              </div>
+              <HealthBadge health={linkedDailyTarget.health || 'GREEN'} />
+            </div>
+
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <p className="text-base font-bold text-slate-900">
+                  {linkedDailyTarget.title}
+                </p>
+                <p className="text-xs text-slate-500 font-medium mt-0.5">
+                  {linkedDailyTarget.actual_value || 0} / {linkedDailyTarget.target_value} {linkedDailyTarget.unit} completed
+                  {Number(linkedDailyTarget.target_value) - Number(linkedDailyTarget.actual_value || 0) > 0 &&
+                    ` · ${Math.max(0, Number(linkedDailyTarget.target_value) - Number(linkedDailyTarget.actual_value || 0))} remaining`}
+                </p>
+              </div>
+
+              <div className="text-right">
+                <p className="text-2xl font-extrabold text-[#801424]">
+                  {linkedDailyTarget.achievement_percent || 0}%
+                </p>
+                <p className="text-[10px] uppercase font-bold text-slate-400 font-mono">
+                  Achievement
+                </p>
+              </div>
+            </div>
+
+            <div className="h-2 rounded-full bg-rose-100 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-[#801424] transition-all"
+                style={{ width: `${linkedDailyTarget.achievement_percent || 0}%` }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
+              <span>Deadline: {linkedDailyTarget.deadline_time || 'End of day'}</span>
+              <span className="font-semibold">{linkedDailyTarget.status}</span>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-3">
@@ -237,31 +403,113 @@ export default function WorkItemDetails() {
               {workItem.priority}
             </span>
 
-            <select
-              value={workItem.status}
-              onChange={(e) => handleStatusChange(e.target.value as WorkItem['status'])}
-              className={`px-3.5 py-1.5 rounded-full text-xs font-bold border outline-none cursor-pointer transition ${
-                workItem.status === 'DONE'
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  : workItem.status === 'IN_PROGRESS'
-                  ? 'bg-amber-50 text-amber-700 border-amber-200'
-                  : workItem.status === 'IN_REVIEW'
-                  ? 'bg-purple-50 text-purple-700 border-purple-200'
-                  : workItem.status === 'BLOCKED'
-                  ? 'bg-rose-50 text-rose-700 border-rose-200'
-                  : 'bg-slate-100 text-slate-700 border-slate-200'
-              }`}
-            >
-              <option value="TODO">TODO</option>
-              <option value="IN_PROGRESS">IN_PROGRESS</option>
-              <option value="IN_REVIEW">IN_REVIEW</option>
-              <option value="DONE">DONE</option>
-              <option value="BLOCKED">BLOCKED</option>
-            </select>
+            {/* Step 414N — Status & Health Badges */}
+            <StatusBadge status={workItem.status} />
+            <HealthBadge health={workItem.health || 'GREEN'} />
+
+            {/* Step 509 — State transition buttons */}
+            {workItem.status === 'TODO' && (
+              <button
+                onClick={() => handleStatusChange('IN_PROGRESS')}
+                className="rounded-xl bg-[#801424] hover:bg-[#9f1239] px-4 py-1.5 text-xs font-bold text-white shadow-xs cursor-pointer transition"
+              >
+                Start Work
+              </button>
+            )}
+
+            {workItem.status === 'IN_PROGRESS' && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => handleStatusChange('DONE')}
+                  className="rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs cursor-pointer transition"
+                >
+                  <span>Complete Work</span>
+                </button>
+                <button
+                  onClick={() => handleStatusChange('BLOCKED')}
+                  className="rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 px-3 py-1.5 text-xs font-bold cursor-pointer transition"
+                >
+                  Put On Hold
+                </button>
+              </div>
+            )}
+
+            {workItem.status === 'BLOCKED' && (
+              <button
+                onClick={() => handleStatusChange('IN_PROGRESS')}
+                className="rounded-xl bg-[#801424] hover:bg-[#9f1239] px-4 py-1.5 text-xs font-bold text-white shadow-xs cursor-pointer transition"
+              >
+                Resume Work
+              </button>
+            )}
+
+            {workItem.status === 'DONE' && (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-1.5 text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                <CheckCircle2 size={13} />
+                <span>Completed</span>
+              </div>
+            )}
+
+            {workItem.status === 'DONE' && canManage && (
+              <button
+                type="button"
+                onClick={() => handleStatusChange('IN_PROGRESS')}
+                className="py-1.5 px-3 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold text-xs cursor-pointer transition"
+              >
+                ↩ Send Back for Correction
+              </button>
+            )}
+
+            {canManage && (
+              <select
+                value={workItem.status}
+                onChange={(e) => handleStatusChange(e.target.value as WorkItem['status'])}
+                className="px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-200 bg-white text-slate-800 outline-none cursor-pointer"
+              >
+                <option value="TODO">To Do</option>
+                <option value="IN_PROGRESS">In Progress</option>
+                <option value="DEVELOPMENT">Development</option>
+                <option value="DONE">Completed</option>
+                <option value="BLOCKED">On Hold</option>
+              </select>
+            )}
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-6 border-t border-slate-100 text-xs text-slate-600">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 pt-6 border-t border-slate-100 text-xs text-slate-600">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400 font-medium">Work Type:</span>
+            {canManage ? (
+              <select
+                value={workItem.work_type_id || ''}
+                onChange={async (e) => {
+                  const val = e.target.value || null
+                  try {
+                    const updated = await updateWorkItem(accessToken!, workItem.id, { work_type_id: val })
+                    setWorkItem((prev) => (prev ? { ...prev, ...updated } : prev))
+                    await loadAllData()
+                  } catch (err) {
+                    alert(err instanceof Error ? err.message : 'Failed to update work type.')
+                  }
+                }}
+                className="px-2 py-1 rounded-lg border border-slate-200 text-xs font-semibold bg-white text-slate-800 outline-none focus:border-zinc-800"
+              >
+                <option value="">No Work Type</option>
+                {workTypes
+                  .filter((wt) => wt.is_active)
+                  .map((wt) => (
+                    <option key={wt.id} value={wt.id}>
+                      {wt.name}
+                    </option>
+                  ))}
+              </select>
+            ) : (
+              <strong className="text-slate-900">
+                {(workItem.work_types || workItem.work_type)?.name || 'None'}
+              </strong>
+            )}
+          </div>
+
           <div className="flex items-center gap-2">
             <span className="text-slate-400 font-medium">Project:</span>
             <strong className="text-slate-900">{workItem.projects?.name || 'Workspace Project'}</strong>
@@ -275,14 +523,30 @@ export default function WorkItemDetails() {
                 ? `${workItem.assignee.first_name} ${workItem.assignee.last_name || ''}`
                 : 'Unassigned'}
             </strong>
+            {canManage && (
+              <button
+                onClick={() => {
+                  setReassignEmployeeId(workItem.assigned_to || '')
+                  setReassignReason('')
+                  setShowReassignModal(true)
+                }}
+                className="ml-2 px-2 py-0.5 rounded-md border border-slate-200 text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-50 cursor-pointer"
+              >
+                Reassign
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
             <Calendar size={15} className="text-slate-400" />
             <span className="text-slate-400 font-medium">Deadline:</span>
-            <strong className="text-slate-900">
-              {workItem.deadline ? new Date(workItem.deadline).toLocaleDateString() : 'No deadline'}
-            </strong>
+            <DeadlineCountdown
+              deadline={workItem.deadline}
+              deadlineTime={workItem.deadline_time || null}
+              timezone={settings?.timezone || 'Asia/Kolkata'}
+              workdayEnd={settings?.workday_end || '18:00'}
+              health={workItem.health}
+            />
           </div>
         </div>
       </div>
@@ -304,11 +568,18 @@ export default function WorkItemDetails() {
           </div>
 
           <button
-            onClick={() => setShowProgressModal(true)}
-            className="flex items-center gap-2 bg-[#09090b] hover:bg-[#18181b] text-white px-4 py-2 rounded-xl text-xs font-semibold transition shadow-xs"
+            onClick={() => {
+              if (workItem.status === 'BLOCKED') {
+                alert('This work is currently on hold. Resolve the blocker before posting an update.')
+                return
+              }
+              setShowUpdateModal(true)
+            }}
+            disabled={workItem.status === 'DONE'}
+            className="flex items-center gap-2 bg-[#801424] hover:bg-[#9f1239] text-white px-4 py-2 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer disabled:opacity-50"
           >
-            <TrendingUp size={15} />
-            Update Progress
+            <MessageSquare size={14} />
+            Update Work
           </button>
         </div>
 
@@ -323,7 +594,23 @@ export default function WorkItemDetails() {
 
       {/* Work Updates Section */}
       <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-4">
-        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Work Updates</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Work Updates</h2>
+          {workItem.status !== 'DONE' && (
+            <button
+              onClick={() => {
+                if (workItem.status === 'BLOCKED') {
+                  alert('This work is currently on hold. Resolve the blocker before posting an update.')
+                  return
+                }
+                setShowUpdateModal(true)
+              }}
+              className="text-xs font-bold text-[#801424] hover:underline cursor-pointer"
+            >
+              + Update Work
+            </button>
+          )}
+        </div>
 
         <div className="space-y-3">
           {updates.length === 0 ? (
@@ -337,30 +624,30 @@ export default function WorkItemDetails() {
                   </span>
                   <span className="text-slate-400">{new Date(u.created_at).toLocaleString()}</span>
                 </div>
-                <p className="text-slate-700">{u.update_text}</p>
-                <div className="pt-1 text-[11px] font-mono text-slate-900 font-semibold">
-                  Progress: {u.progress_percent}%
-                </div>
+                <p className="text-slate-700 whitespace-pre-wrap">{u.update_text}</p>
               </div>
             ))
           )}
         </div>
 
-        <form onSubmit={handleAddUpdate} className="flex gap-3 pt-2">
-          <input
-            value={updateText}
-            onChange={(e) => setUpdateText(e.target.value)}
-            placeholder="Write an update..."
-            className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 text-xs outline-none focus:border-zinc-800"
-          />
-          <button
-            type="submit"
-            disabled={updateSubmitting || !updateText.trim()}
-            className="px-5 py-2.5 bg-[#09090b] hover:bg-[#18181b] text-white font-semibold text-xs rounded-xl transition disabled:opacity-50"
-          >
-            Post Update
-          </button>
-        </form>
+        {workItem.status !== 'DONE' && (
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (workItem.status === 'BLOCKED') {
+                  alert('This work is currently on hold. Resolve the blocker before posting an update.')
+                  return
+                }
+                setShowUpdateModal(true)
+              }}
+              className="w-full py-2.5 px-4 rounded-xl border border-dashed border-slate-300 hover:border-[#801424] hover:bg-slate-50 text-slate-600 hover:text-[#801424] text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer"
+            >
+              <MessageSquare size={14} />
+              <span>Update Work (Answer 3 simple questions)</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Comments Section */}
@@ -403,6 +690,62 @@ export default function WorkItemDetails() {
         </form>
       </div>
 
+      {/* ASSIGNMENT HISTORY (Step 145) */}
+      <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-4">
+        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+          ASSIGNMENT HISTORY
+        </h2>
+        <div className="border-t border-slate-100 pt-3 space-y-3">
+          {assignmentHistory.length === 0 ? (
+            <p className="text-xs text-slate-400 italic">
+              {workItem.assignee
+                ? `${workItem.assignee.first_name} ${workItem.assignee.last_name || ''} — Assigned ${new Date(workItem.created_at).toLocaleDateString()}`
+                : 'No assignment history logged.'}
+            </p>
+          ) : (
+            assignmentHistory.map((hist, idx) => {
+              const nextName = hist.next_user
+                ? `${hist.next_user.first_name} ${hist.next_user.last_name || ''}`.trim()
+                : 'Unassigned'
+              const isFirst = idx === 0 && !hist.previous_assignee
+
+              return (
+                <div
+                  key={hist.id}
+                  className="p-3.5 border border-slate-100 rounded-xl bg-slate-50/50 space-y-1 text-xs"
+                >
+                  <div className="flex items-center justify-between font-bold text-slate-900">
+                    <span>{nextName}</span>
+                    <span className="text-slate-400 text-[11px] font-normal">
+                      {new Date(hist.created_at).toLocaleString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                  </div>
+                  <p className="text-slate-500 font-medium text-[11px]">
+                    {isFirst ? 'Assigned' : 'Reassigned'}
+                  </p>
+                  {hist.reason && (
+                    <div className="pt-1.5 border-t border-slate-200/60 mt-1">
+                      <span className="text-slate-400 font-semibold block text-[10px] uppercase">
+                        Reason:
+                      </span>
+                      <p className="text-slate-800 font-medium">{hist.reason}</p>
+                    </div>
+                  )}
+                </div>
+              )
+            })
+          )}
+        </div>
+      </div>
+
+      {/* Work Dependencies & Root Cause Blockers */}
+      <WorkDependenciesSection workItem={workItem} />
+
       {/* Concerns Section */}
       <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-4">
         <div className="flex items-center justify-between">
@@ -439,7 +782,7 @@ export default function WorkItemDetails() {
                     >
                       {c.status}
                     </span>
-                    {c.status === 'OPEN' && (profile?.role === 'SUPER_ADMIN' || profile?.role === 'MANAGER') && (
+                    {c.status === 'OPEN' && (profile?.role === 'SUPER_ADMIN' || profile?.role === 'ADMIN' || profile?.role === 'MANAGER') && (
                       <button
                         onClick={() => handleResolveConcern(c.id)}
                         className="text-[11px] text-emerald-600 hover:underline flex items-center gap-1"
@@ -456,62 +799,80 @@ export default function WorkItemDetails() {
         </div>
       </div>
 
-      {/* Progress Modal */}
-      {showProgressModal && (
+      {/* Work Update Modal */}
+      {showUpdateModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-100 relative">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-100 relative space-y-4">
             <button
-              onClick={() => setShowProgressModal(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+              onClick={() => setShowUpdateModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
             >
               <X size={20} />
             </button>
 
-            <h2 className="text-lg font-bold text-slate-900 mb-1">Update Progress</h2>
-            <p className="text-xs text-slate-500 mb-4">Set your current completion percentage and summary.</p>
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Update Work</h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Answer these 3 simple questions to update your progress. No percentage required.
+              </p>
+            </div>
 
-            <form onSubmit={handleAddUpdate} className="space-y-4 text-xs">
+            <form onSubmit={handleAddUpdate} className="space-y-3.5 text-xs">
               <div>
-                <label className="block font-medium text-slate-700 mb-1">
-                  Progress Percentage ({progressPercent}%)
+                <label className="block font-semibold text-slate-700 mb-1">
+                  What did you work on today? *
                 </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  step="5"
-                  value={progressPercent}
-                  onChange={(e) => setProgressPercent(Number(e.target.value))}
-                  className="w-full accent-zinc-900"
+                <textarea
+                  required
+                  rows={2}
+                  value={workedToday}
+                  onChange={(e) => setWorkedToday(e.target.value)}
+                  placeholder="Summary of what you worked on..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-[#801424] resize-none"
                 />
               </div>
 
               <div>
-                <label className="block font-medium text-slate-700 mb-1">Update Description *</label>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  What is completed?
+                </label>
                 <textarea
-                  required
-                  rows={3}
-                  value={updateText}
-                  onChange={(e) => setUpdateText(e.target.value)}
-                  placeholder="What progress did you complete?"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-zinc-800 resize-none"
+                  rows={2}
+                  value={completedWork}
+                  onChange={(e) => setCompletedWork(e.target.value)}
+                  placeholder="Specific items, tasks, or milestones finished..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-[#801424] resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Any blocker / next step?
+                </label>
+                <textarea
+                  rows={2}
+                  value={blockersNextSteps}
+                  onChange={(e) => setBlockersNextSteps(e.target.value)}
+                  placeholder="Any blockers encountered or upcoming next steps..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-[#801424] resize-none"
                 />
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowProgressModal(false)}
-                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl font-medium"
+                  onClick={() => setShowUpdateModal(false)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl font-medium cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={updateSubmitting || !updateText.trim()}
-                  className="px-5 py-2 bg-[#801424] hover:bg-[#9f1239] text-white font-bold rounded-xl disabled:opacity-50 cursor-pointer"
+                  disabled={updateSubmitting || !workedToday.trim()}
+                  className="px-5 py-2 bg-[#801424] hover:bg-[#9f1239] text-white font-bold rounded-xl disabled:opacity-50 cursor-pointer flex items-center gap-1.5 shadow-xs transition"
                 >
-                  Submit Progress
+                  <Send size={12} />
+                  <span>{updateSubmitting ? 'Submitting...' : 'Submit Update'}</span>
                 </button>
               </div>
             </form>
@@ -535,13 +896,27 @@ export default function WorkItemDetails() {
 
             <form onSubmit={handleAddConcern} className="space-y-4 text-xs">
               <div>
-                <label className="block font-medium text-slate-700 mb-1">Describe Blocker *</label>
+                <label className="block font-medium text-slate-700 mb-1">Priority Level</label>
+                <select
+                  value={concernPriority}
+                  onChange={(e) => setConcernPriority(e.target.value as any)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-zinc-800 bg-white"
+                >
+                  <option value="LOW">LOW — Informational</option>
+                  <option value="MEDIUM">MEDIUM — Normal Follow-up</option>
+                  <option value="HIGH">HIGH — High Risk (Orange)</option>
+                  <option value="CRITICAL">CRITICAL — Blocker (Red)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Describe Concern / Blocker *</label>
                 <textarea
                   required
                   rows={4}
                   value={concernText}
                   onChange={(e) => setConcernText(e.target.value)}
-                  placeholder="Explain the blocker or difficulty..."
+                  placeholder="Explain the blocker or difficulty preventing task completion..."
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-zinc-800 resize-none"
                 />
               </div>
@@ -557,9 +932,105 @@ export default function WorkItemDetails() {
                 <button
                   type="submit"
                   disabled={concernSubmitting || !concernText.trim()}
-                  className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-xl disabled:opacity-50"
+                  className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-xl disabled:opacity-50 cursor-pointer"
                 >
-                  Submit Concern
+                  Report Concern
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Reassign Work Modal (Step 143) */}
+      {showReassignModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-100 relative space-y-4">
+            <button
+              onClick={() => setShowReassignModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+            >
+              <X size={20} />
+            </button>
+
+            <h2 className="text-lg font-bold text-slate-900">Reassign Work Item</h2>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault()
+                if (!accessToken || !workItem) return
+                const isAssigneeChanging = reassignEmployeeId !== (workItem.assigned_to || '')
+                if (isAssigneeChanging && !reassignReason.trim()) {
+                  alert('Reassignment reason is required when changing assignee.')
+                  return
+                }
+
+                setReassignSubmitting(true)
+                try {
+                  await updateWorkItem(accessToken, workItem.id, {
+                    assigned_to: reassignEmployeeId || null,
+                    assignment_reason: reassignReason.trim() || undefined,
+                  })
+                  setShowReassignModal(false)
+                  await loadAllData()
+                } catch (err) {
+                  alert(err instanceof Error ? err.message : 'Failed to reassign work.')
+                } finally {
+                  setReassignSubmitting(false)
+                }
+              }}
+              className="space-y-4 text-xs"
+            >
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">Reassign To</label>
+                <select
+                  value={reassignEmployeeId}
+                  onChange={(e) => setReassignEmployeeId(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-zinc-800 bg-white"
+                >
+                  <option value="">Unassigned</option>
+                  {employees
+                    .filter((emp) =>
+                      profile?.role === 'MANAGER'
+                        ? emp.role === 'EMPLOYEE'
+                        : emp.role === 'EMPLOYEE' || emp.role === 'MANAGER',
+                    )
+                    .map((emp) => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.first_name} {emp.last_name || ''} ({emp.role})
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-medium text-slate-700 mb-1">
+                  Reason {reassignEmployeeId !== (workItem.assigned_to || '') && '*'}
+                </label>
+                <input
+                  type="text"
+                  required={reassignEmployeeId !== (workItem.assigned_to || '')}
+                  value={reassignReason}
+                  onChange={(e) => setReassignReason(e.target.value)}
+                  placeholder="e.g. Workload balancing"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-zinc-800 bg-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowReassignModal(false)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl font-medium cursor-pointer"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={reassignSubmitting}
+                  className="px-5 py-2 bg-[#09090b] hover:bg-[#18181b] text-white font-bold rounded-xl cursor-pointer disabled:opacity-50"
+                >
+                  Save Assignment
                 </button>
               </div>
             </form>

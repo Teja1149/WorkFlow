@@ -6,14 +6,25 @@ export interface WorkItem {
   id: string
   organization_id: string
   project_id: string
+  work_type_id: string | null
+  module_id?: string | null
+  milestone_id: string | null
   assigned_to: string | null
   created_by: string
   title: string
   description: string | null
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
-  status: 'TODO' | 'IN_PROGRESS' | 'IN_REVIEW' | 'DONE' | 'BLOCKED'
+  status: 'TODO' | 'IN_PROGRESS' | 'BLOCKED' | 'DONE'
   start_date: string | null
   deadline: string | null
+  deadline_time: string | null
+  original_deadline?: string | null
+  progress_percent?: number
+  health?: 'GREEN' | 'AMBER' | 'ORANGE' | 'RED' | 'CRITICAL'
+  estimated_hours?: number | null
+  actual_hours?: number | null
+  story_points?: number | null
+  carry_forward_count?: number | null
   completed_at: string | null
   created_at: string
   updated_at: string
@@ -21,6 +32,48 @@ export interface WorkItem {
     id: string
     name: string
     project_key: string
+  }
+  work_types?: {
+    id: string
+    name: string
+    description?: string | null
+    icon?: string | null
+    color?: string | null
+    is_active?: boolean
+  }
+  work_type?: {
+    id: string
+    name: string
+    description?: string | null
+    icon?: string | null
+    color?: string | null
+    is_active?: boolean
+  }
+  project_modules?: {
+    id: string
+    name: string
+    description?: string | null
+    is_active?: boolean
+  }
+  module?: {
+    id: string
+    name: string
+    description?: string | null
+    is_active?: boolean
+  }
+  project_milestones?: {
+    id: string
+    name: string
+    deadline: string
+    status: string
+    progress_percent?: number
+  }
+  milestone?: {
+    id: string
+    name: string
+    deadline: string
+    status: string
+    progress_percent?: number
   }
   assignee?: UserProfile
   creator?: UserProfile
@@ -57,12 +110,19 @@ export async function createWorkItem(
   token: string,
   data: {
     project_id: string
+    work_type_id?: string | null
+    module_id?: string | null
+    milestone_id?: string | null
     assigned_to?: string | null
     title: string
     description?: string
     priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
     start_date?: string | null
     deadline?: string | null
+    deadline_time?: string | null
+    estimated_hours?: number | null
+    actual_hours?: number | null
+    story_points?: number | null
   },
 ) {
   return request(token, '/work-items', {
@@ -78,13 +138,62 @@ export async function updateWorkItem(
     status?: WorkItem['status']
     priority?: WorkItem['priority']
     deadline?: string | null
-    description?: string
+    deadline_time?: string | null
+    title?: string
+    description?: string | null
+    assigned_to?: string | null
+    work_type_id?: string | null
+    module_id?: string | null
+    milestone_id?: string | null
+    estimated_hours?: number | null
+    actual_hours?: number | null
+    progress_percent?: number
+    assignment_reason?: string
   },
 ) {
   return request(token, `/work-items/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(data),
   }) as Promise<WorkItem>
+}
+
+// Step 500 — Unified status transition service
+export async function updateWorkItemStatus(
+  token: string,
+  id: string,
+  status:
+    | 'TODO'
+    | 'IN_PROGRESS'
+    | 'BLOCKED'
+    | 'DONE',
+  notes?: string,
+) {
+  return request(token, `/work-items/${id}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status, notes }),
+  }) as Promise<WorkItem>
+}
+
+export const transitionWorkItemStatus = updateWorkItemStatus
+
+export interface WorkAssignmentHistory {
+  id: string
+  work_item_id: string
+  previous_assignee: string | null
+  new_assignee: string | null
+  changed_by: string | null
+  reason: string | null
+  created_at: string
+  prev_user?: UserProfile
+  next_user?: UserProfile
+  changer?: UserProfile
+}
+
+export async function getWorkAssignmentHistory(
+  token: string,
+  workItemId: string,
+) {
+  return request(token, `/work-items/${workItemId}/assignment-history`) as Promise<WorkAssignmentHistory[]>
 }
 
 export async function getWorkUpdates(
@@ -94,17 +203,22 @@ export async function getWorkUpdates(
   return request(token, `/work-items/${workItemId}/updates`)
 }
 
+export interface AddWorkUpdateInput {
+  update_text: string
+  report_data?: Record<string, unknown>
+  actual_value?: number
+  progress_percent?: number
+}
+
 export async function addWorkUpdate(
   token: string,
   workItemId: string,
-  payload: {
-    update_text: string
-    progress_percent: number
-  },
+  payload: AddWorkUpdateInput | string,
 ) {
+  const body = typeof payload === 'string' ? { update_text: payload } : payload
   return request(token, `/work-items/${workItemId}/updates`, {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   })
 }
 
@@ -141,6 +255,7 @@ export async function addWorkConcern(
   workItemId: string,
   payload: {
     concern: string
+    priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
   },
 ) {
   return request(token, `/work-items/${workItemId}/concerns`, {
@@ -153,8 +268,13 @@ export async function resolveWorkConcern(
   token: string,
   workItemId: string,
   concernId: string,
+  payload?: {
+    resolution_note?: string
+  },
 ) {
   return request(token, `/work-items/${workItemId}/concerns/${concernId}/resolve`, {
     method: 'PATCH',
+    body: payload ? JSON.stringify(payload) : undefined,
   })
 }
+

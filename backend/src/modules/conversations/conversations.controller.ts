@@ -51,13 +51,22 @@ export async function newConversation(req: Request, res: Response) {
 
 export async function listMessages(req: Request, res: Response) {
   try {
+    const userId = req.userId
+    const organizationId = req.profile?.organization_id
+
+    if (!userId || !organizationId) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' })
+    }
+
     const conversationId = req.params.id as string
-    const messages = await getConversationMessages(conversationId)
+    const messages = await getConversationMessages(conversationId, userId, organizationId)
     return res.json({ success: true, data: messages })
   } catch (error) {
-    return res.status(500).json({
+    const message = error instanceof Error ? error.message : 'Unable to load messages.'
+    const status = message.includes('permission') ? 403 : message.includes('not found') ? 404 : 500
+    return res.status(status).json({
       success: false,
-      message: error instanceof Error ? error.message : 'Unable to load messages.',
+      message,
     })
   }
 }
@@ -65,19 +74,22 @@ export async function listMessages(req: Request, res: Response) {
 export async function postMessage(req: Request, res: Response) {
   try {
     const userId = req.userId
+    const organizationId = req.profile?.organization_id
     const conversationId = req.params.id as string
     const { message } = req.body
 
-    if (!userId) {
+    if (!userId || !organizationId) {
       return res.status(401).json({ success: false, message: 'Authentication required.' })
     }
 
-    const created = await sendConversationMessage(conversationId, userId, message)
+    const created = await sendConversationMessage(conversationId, userId, organizationId, message)
     return res.status(201).json({ success: true, data: created })
   } catch (error) {
-    return res.status(400).json({
+    const message = error instanceof Error ? error.message : 'Unable to send message.'
+    const status = message.includes('permission') ? 403 : message.includes('not found') ? 404 : 400
+    return res.status(status).json({
       success: false,
-      message: error instanceof Error ? error.message : 'Unable to send message.',
+      message,
     })
   }
 }

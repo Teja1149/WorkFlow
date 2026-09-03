@@ -1,14 +1,23 @@
 # Environment files
 .env
 .env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production
+.env.production.local
 !.env.example
 
 # Dependencies
 node_modules/
+backend/node_modules/
+frontend/node_modules/
 
 # Production build outputs
 dist/
 dist-ssr/
+backend/dist/
+frontend/dist/
 
 # Logs
 logs

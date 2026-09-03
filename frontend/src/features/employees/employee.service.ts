@@ -26,7 +26,8 @@ async function request(
 }
 
 export async function getEmployees(token: string) {
-  return request(token, '/employees') as Promise<UserProfile[]>
+  const data = await request(token, '/employees')
+  return (Array.isArray(data) ? data : []) as UserProfile[]
 }
 
 export async function createEmployee(
@@ -38,6 +39,7 @@ export async function createEmployee(
     last_name?: string
     phone?: string
     designation?: string
+    employee_id?: string
     role: 'MANAGER' | 'EMPLOYEE'
     manager_id?: string | null
     joining_date?: string

@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Search, FolderKanban, Calendar, User, X, AlertCircle, Trash2 } from 'lucide-react'
 import { useAuth } from '../features/auth/AuthContext'
-import { getProjects, createProject, deleteProject, type Project } from '../features/projects/project.service'
+import { getProjects, createProject, deleteProject, type Project, type ProjectStatus } from '../features/projects/project.service'
 import { getEmployees } from '../features/employees/employee.service'
 import type { UserProfile } from '../features/auth/auth.types'
+import { PROJECT_STATUS_OPTIONS } from './ProjectDetails'
 
 export default function Projects() {
   const { accessToken, profile } = useAuth()
@@ -22,6 +23,7 @@ export default function Projects() {
     name: '',
     project_key: '',
     description: '',
+    status: 'PLANNING' as ProjectStatus,
     methodology: 'SCRUM' as 'SCRUM' | 'KANBAN',
     project_manager_id: '',
     start_date: '',
@@ -34,11 +36,11 @@ export default function Projects() {
     setError('')
     try {
       const [projData, empData] = await Promise.all([
-        getProjects(accessToken),
+        getProjects(accessToken).catch(() => []),
         getEmployees(accessToken).catch(() => []),
       ])
-      setProjects(projData)
-      setEmployees(empData)
+      setProjects(Array.isArray(projData) ? projData : [])
+      setEmployees(Array.isArray(empData) ? empData : [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load projects.')
     } finally {
@@ -51,18 +53,23 @@ export default function Projects() {
   }, [accessToken])
 
   const managers = useMemo(() => {
-    return employees.filter((e) => e.role === 'MANAGER' || e.role === 'SUPER_ADMIN')
+    const safeEmployees = Array.isArray(employees) ? employees : []
+    return safeEmployees.filter(
+      (e) => e && (e.role === 'MANAGER' || e.role === 'ADMIN' || e.role === 'SUPER_ADMIN'),
+    )
   }, [employees])
 
   const filteredProjects = useMemo(() => {
+    const safeProjects = Array.isArray(projects) ? projects : []
     const q = search.trim().toLowerCase()
-    if (!q) return projects
+    if (!q) return safeProjects
 
-    return projects.filter(
+    return safeProjects.filter(
       (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.project_key.toLowerCase().includes(q) ||
-        p.description?.toLowerCase().includes(q),
+        p &&
+        ((p.name || '').toLowerCase().includes(q) ||
+          (p.project_key || '').toLowerCase().includes(q) ||
+          (p.description || '').toLowerCase().includes(q)),
     )
   }, [projects, search])
 
@@ -88,6 +95,7 @@ export default function Projects() {
         name: '',
         project_key: '',
         description: '',
+        status: 'PLANNING',
         methodology: 'SCRUM',
         project_manager_id: '',
         start_date: '',
@@ -136,7 +144,7 @@ export default function Projects() {
           </p>
         </div>
 
-        {profile?.role === 'SUPER_ADMIN' && (
+        {(profile?.role === 'SUPER_ADMIN' || profile?.role === 'ADMIN') && (
           <button
             onClick={() => setModalOpen(true)}
             className="flex items-center gap-2 bg-[#801424] hover:bg-[#9f1239] text-white px-4 py-2.5 rounded-xl font-bold shadow-xs transition cursor-pointer"
@@ -191,18 +199,19 @@ export default function Projects() {
                         {proj.project_key}
                       </span>
                       <div className="flex items-center gap-2">
-                        <span
-                          className={`text-xs font-semibold px-2.5 py-1 rounded-lg ${
-                            proj.status === 'ACTIVE'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : proj.status === 'PLANNING'
-                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                              : 'bg-slate-100 text-slate-700 border border-slate-200'
-                          }`}
-                        >
-                          {proj.status}
-                        </span>
-                        {profile?.role === 'SUPER_ADMIN' && (
+                        {(() => {
+                          const stOpt = PROJECT_STATUS_OPTIONS.find((s) => s.value === proj.status)
+                          return (
+                            <span
+                              className={`text-xs font-bold px-2.5 py-1 rounded-lg border ${
+                                stOpt?.style || 'bg-slate-100 text-slate-700 border-slate-200'
+                              }`}
+                            >
+                              {stOpt?.label || proj.status || 'Planning'}
+                            </span>
+                          )
+                        })()}
+                        {(profile?.role === 'SUPER_ADMIN' || profile?.role === 'ADMIN') && (
                           <button
                             onClick={(e) => handleDeleteProject(e, proj)}
                             disabled={deletingId === proj.id}
@@ -303,7 +312,23 @@ export default function Projects() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block font-medium text-slate-700 mb-1">Status</label>
+                  <select
+                    value={form.status}
+                    onChange={(e) =>
+                      setForm({ ...form, status: e.target.value as ProjectStatus })
+                    }
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-zinc-800 bg-white"
+                  >
+                    {PROJECT_STATUS_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div>
                   <label className="block font-medium text-slate-700 mb-1">Methodology *</label>
                   <select

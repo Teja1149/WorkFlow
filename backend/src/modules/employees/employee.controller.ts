@@ -37,7 +37,7 @@ export async function listEmployees(req: Request, res: Response) {
 export async function addEmployee(req: Request, res: Response) {
   try {
     const organizationId = req.profile?.organization_id
-    const requesterRole = req.profile?.role as 'SUPER_ADMIN' | 'MANAGER' | 'EMPLOYEE'
+    const requesterRole = req.profile?.role as 'SUPER_ADMIN' | 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
     const requesterId = req.profile?.id
 
     if (!organizationId || !requesterRole || !requesterId) {
@@ -104,7 +104,7 @@ export async function editEmployee(req: Request, res: Response) {
 export async function removeEmployee(req: Request, res: Response) {
   try {
     const organizationId = req.profile?.organization_id
-    const requesterRole = req.profile?.role as 'SUPER_ADMIN' | 'MANAGER' | 'EMPLOYEE'
+    const requesterRole = req.profile?.role as 'SUPER_ADMIN' | 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
     const employeeId = req.params.id as string
 
     if (!organizationId || !requesterRole || !employeeId) {

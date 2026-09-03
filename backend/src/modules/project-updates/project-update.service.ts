@@ -63,15 +63,12 @@ export async function createProjectUpdateTemplate(
     .insert({
       project_id: projectId,
       created_by: input.createdBy,
-      title:
+      name:
         input.title ||
         'Daily Work Report Template',
       description:
         input.description ||
         'Custom daily report fields',
-      name:
-        input.title ||
-        'Daily Work Report Template',
       is_active: true,
     })
     .select()
@@ -302,18 +299,45 @@ export async function submitProjectDailyUpdate(
       .delete()
       .eq('daily_update_id', updateRecord.id)
 
-    const valuePayloads = Object.entries(input.values).map(([fieldId, val]) => ({
-      daily_update_id: updateRecord.id,
-      field_id: fieldId,
-      value_text: String(val ?? ''),
-    }))
+    // Resolve all field keys/names/IDs to actual project_update_fields IDs
+    const { data: templateFields } = await supabaseAdmin
+      .from('project_update_fields')
+      .select('id, field_key, field_name')
+      .eq('project_id', projectId)
 
-    const { error: valuesError } = await supabaseAdmin
-      .from('project_daily_update_values')
-      .insert(valuePayloads)
+    const resolvedValues = new Map<string, string>()
 
-    if (valuesError) {
-      console.error('Error inserting project daily update values:', valuesError)
+    for (const [key, val] of Object.entries(input.values)) {
+      if (val === undefined || val === null || String(val).trim() === '') continue
+
+      // Match key against field.id, field.field_key, or field.field_name
+      const matchedField = (templateFields || []).find(
+        (f) =>
+          f.id === key ||
+          f.field_key === key ||
+          f.field_name?.toLowerCase().trim() === key.toLowerCase().trim(),
+      )
+
+      const targetFieldId = matchedField ? matchedField.id : key
+      resolvedValues.set(targetFieldId, String(val))
+    }
+
+    const valuePayloads = Array.from(resolvedValues.entries()).map(
+      ([fieldId, valueText]) => ({
+        daily_update_id: updateRecord.id,
+        field_id: fieldId,
+        value_text: valueText,
+      }),
+    )
+
+    if (valuePayloads.length > 0) {
+      const { error: valuesError } = await supabaseAdmin
+        .from('project_daily_update_values')
+        .insert(valuePayloads)
+
+      if (valuesError) {
+        console.error('Error inserting project daily update values:', valuesError)
+      }
     }
   }
 
@@ -448,7 +472,12 @@ export async function getProjectDailyUpdates(
     throw new Error(error.message)
   }
 
-  return data || []
+  const mapped = (data || []).map((item: any) => ({
+    ...item,
+    values: item.values || item.project_daily_update_values || [],
+  }))
+
+  return mapped
 }
 
 export interface SubmitTeamUpdateInput {

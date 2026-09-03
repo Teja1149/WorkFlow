@@ -1,10 +1,17 @@
 import { Router } from 'express'
 import { requireAuth } from '../../middleware/auth.js'
 import { requireRoles } from '../../middleware/roles.js'
-import { managerDashboard } from './dashboard.controller.js'
+import { adminDashboard, managerDashboard } from './dashboard.controller.js'
 import { employeeDashboard } from './employee-dashboard.controller.js'
 
 const router = Router()
+
+router.get(
+  '/admin',
+  requireAuth,
+  requireRoles('SUPER_ADMIN', 'ADMIN'),
+  adminDashboard,
+)
 
 router.get(
   '/manager',

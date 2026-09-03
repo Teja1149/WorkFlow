@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express'
 import { getComments, addComment } from './work-comment.service.js'
 import { getUpdates, addUpdate } from './work-update.service.js'
-import { getConcerns, addConcern, resolveConcern } from './work-concern.service.js'
+import { getConcerns, addConcern, resolveConcern, reviewWorkConcern } from './work-concern.service.js'
 import { getActivity } from './work-activity.service.js'
 
 export async function listComments(req: Request, res: Response) {
@@ -50,9 +50,9 @@ export async function createUpdate(req: Request, res: Response) {
   try {
     const workItemId = req.params.id as string
     const userId = req.userId!
-    const { update_text, progress_percent } = req.body
+    const { update_text } = req.body
 
-    const data = await addUpdate(workItemId, userId, update_text, Number(progress_percent || 0))
+    const data = await addUpdate(workItemId, userId, update_text)
     return res.status(201).json({ success: true, data })
   } catch (error) {
     return res.status(400).json({
@@ -75,13 +75,13 @@ export async function listConcerns(req: Request, res: Response) {
   }
 }
 
-export async function createConcern(req: Request, res: Response) {
+export async function addConcernHandler(req: Request, res: Response) {
   try {
     const workItemId = req.params.id as string
     const userId = req.userId!
-    const { concern } = req.body
+    const { concern, priority } = req.body
 
-    const data = await addConcern(workItemId, userId, concern)
+    const data = await addConcern(workItemId, userId, concern, priority || 'MEDIUM')
     return res.status(201).json({ success: true, data })
   } catch (error) {
     return res.status(400).json({
@@ -95,8 +95,9 @@ export async function resolveConcernHandler(req: Request, res: Response) {
   try {
     const concernId = req.params.concernId as string
     const userId = req.userId!
+    const orgId = req.profile?.organization_id!
 
-    const data = await resolveConcern(concernId, userId)
+    const data = await reviewWorkConcern(orgId, userId, concernId, req.body?.resolution_note)
     return res.json({ success: true, data })
   } catch (error) {
     return res.status(400).json({

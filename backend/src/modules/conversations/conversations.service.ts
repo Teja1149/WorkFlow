@@ -83,7 +83,43 @@ export async function createConversation(
   return conv
 }
 
-export async function getConversationMessages(conversationId: string) {
+export async function getConversationMessages(
+  conversationId: string,
+  userId: string,
+  organizationId: string,
+) {
+  // 1. Verify conversation belongs to organization
+  const { data: conv, error: convErr } = await supabaseAdmin
+    .from('conversations')
+    .select('id, organization_id')
+    .eq('id', conversationId)
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+
+  if (convErr) {
+    throw new Error(convErr.message)
+  }
+
+  if (!conv) {
+    throw new Error('Conversation not found.')
+  }
+
+  // 2. Verify user is a member of this conversation
+  const { data: member, error: memErr } = await supabaseAdmin
+    .from('conversation_members')
+    .select('id')
+    .eq('conversation_id', conversationId)
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (memErr) {
+    throw new Error(memErr.message)
+  }
+
+  if (!member) {
+    throw new Error('You do not have permission to view this conversation.')
+  }
+
   const { data, error } = await supabaseAdmin
     .from('conversation_messages')
     .select(`
@@ -108,10 +144,43 @@ export async function getConversationMessages(conversationId: string) {
 export async function sendConversationMessage(
   conversationId: string,
   senderId: string,
+  organizationId: string,
   messageText: string,
 ) {
   if (!messageText.trim()) {
     throw new Error('Message cannot be empty.')
+  }
+
+  // 1. Verify conversation belongs to organization
+  const { data: conv, error: convErr } = await supabaseAdmin
+    .from('conversations')
+    .select('id, organization_id, name, type')
+    .eq('id', conversationId)
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+
+  if (convErr) {
+    throw new Error(convErr.message)
+  }
+
+  if (!conv) {
+    throw new Error('Conversation not found.')
+  }
+
+  // 2. Verify sender is a member of this conversation
+  const { data: member, error: memErr } = await supabaseAdmin
+    .from('conversation_members')
+    .select('id')
+    .eq('conversation_id', conversationId)
+    .eq('user_id', senderId)
+    .maybeSingle()
+
+  if (memErr) {
+    throw new Error(memErr.message)
+  }
+
+  if (!member) {
+    throw new Error('You do not have permission to post in this conversation.')
   }
 
   const { data, error } = await supabaseAdmin
@@ -144,28 +213,47 @@ export async function sendConversationMessage(
 
   // Notify other conversation members
   try {
-    const { data: members } = await supabaseAdmin
-      .from('conversation_members')
-      .select('user_id, conversation:conversations(organization_id, name, type)')
-      .eq('conversation_id', conversationId)
+    const [{ data: conv }, { data: members }] = await Promise.all([
+      supabaseAdmin
+        .from('conversations')
+        .select('id, organization_id, name, type')
+        .eq('id', conversationId)
+        .single(),
+      supabaseAdmin
+        .from('conversation_members')
+        .select('user_id')
+        .eq('conversation_id', conversationId),
+    ])
 
-    if (members && members.length > 0) {
-      const senderName = data.sender?.first_name || 'Someone'
+    if (conv?.organization_id && members && members.length > 0) {
+      const senderFirstName = data.sender?.first_name || 'Someone'
+      const senderFullName = data.sender
+        ? `${data.sender.first_name} ${data.sender.last_name || ''}`.trim()
+        : 'Someone'
+
+      const notifTitle =
+        conv.type === 'TEAM'
+          ? `New message in ${conv.name || 'Team Chat'}`
+          : `Message from ${senderFirstName}`
+
+      const notifMessage = `${senderFullName}: ${messageText.trim().substring(0, 80)}`
+
       for (const m of members) {
         if (m.user_id !== senderId) {
-          const convInfo = (m.conversation as unknown) as { organization_id: string; name: string | null; type: string }
           await createNotification({
             userId: m.user_id,
-            organizationId: convInfo?.organization_id,
+            organizationId: conv.organization_id,
             type: 'MESSAGE_RECEIVED',
-            title: convInfo?.type === 'TEAM' ? `New message in ${convInfo.name || 'Team'}` : 'New Direct Message',
-            message: `${senderName}: ${messageText.trim().substring(0, 80)}`,
+            title: notifTitle,
+            message: notifMessage,
+          }).catch((err) => {
+            console.error(`Error creating chat notification for ${m.user_id}:`, err)
           })
         }
       }
     }
-  } catch {
-    // Ignore notification error
+  } catch (notifErr) {
+    console.error('Failed to process conversation notifications:', notifErr)
   }
 
   return data

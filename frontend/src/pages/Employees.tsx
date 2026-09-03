@@ -7,6 +7,7 @@ import type { UserProfile } from '../features/auth/auth.types'
 interface FormData {
   first_name: string
   last_name: string
+  employee_id: string
   email: string
   password: string
   phone: string
@@ -19,6 +20,7 @@ interface FormData {
 const emptyForm: FormData = {
   first_name: '',
   last_name: '',
+  employee_id: '',
   email: '',
   password: '',
   phone: '',
@@ -88,7 +90,9 @@ export default function Employees() {
   }, [employees, search])
 
   const canManageAccounts =
-    currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'MANAGER'
+    currentUser?.role === 'SUPER_ADMIN' ||
+    currentUser?.role === 'ADMIN' ||
+    currentUser?.role === 'MANAGER'
 
   async function handleAddSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -99,6 +103,7 @@ export default function Employees() {
     try {
       await createEmployee(accessToken, {
         ...form,
+        employee_id: form.employee_id.trim() || undefined,
         role: currentUser?.role === 'MANAGER' ? 'EMPLOYEE' : form.role,
         manager_id: form.manager_id || (currentUser?.role === 'MANAGER' ? currentUser.id : null),
         joining_date: form.joining_date || undefined,
@@ -195,7 +200,7 @@ export default function Employees() {
             className="flex items-center gap-2 bg-[#801424] hover:bg-[#9f1239] text-white px-4 py-2.5 rounded-xl font-bold shadow-xs transition cursor-pointer"
           >
             <Plus size={18} />
-            {currentUser?.role === 'SUPER_ADMIN' ? 'Add Employee / Manager' : 'Add Employee'}
+            {currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN' ? 'Add Employee / Manager' : 'Add Employee'}
           </button>
         )}
       </div>
@@ -249,11 +254,13 @@ export default function Employees() {
                     emp.id !== currentUser?.id &&
                     emp.role !== 'SUPER_ADMIN' &&
                     (currentUser?.role === 'SUPER_ADMIN' ||
+                      currentUser?.role === 'ADMIN' ||
                       (currentUser?.role === 'MANAGER' && emp.role === 'EMPLOYEE'))
 
                   // Determine if current user can edit this specific account
                   const canEditThis =
                     currentUser?.role === 'SUPER_ADMIN' ||
+                    currentUser?.role === 'ADMIN' ||
                     (currentUser?.role === 'MANAGER' && emp.role === 'EMPLOYEE')
 
                   return (
@@ -373,6 +380,16 @@ export default function Employees() {
               </div>
 
               <div>
+                <label className="block font-medium text-slate-700 mb-1">Employee ID Number</label>
+                <input
+                  value={form.employee_id}
+                  onChange={(e) => setForm({ ...form, employee_id: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-zinc-800 font-mono text-slate-800"
+                  placeholder="e.g. EMP-101 (Leave blank for auto-generated ID)"
+                />
+              </div>
+
+              <div>
                 <label className="block font-medium text-slate-700 mb-1">Email *</label>
                 <input
                   type="email"
@@ -399,7 +416,7 @@ export default function Employees() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block font-medium text-slate-700 mb-1">Role *</label>
-                  {currentUser?.role === 'SUPER_ADMIN' ? (
+                  {currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN' ? (
                     <select
                       value={form.role}
                       onChange={(e) =>

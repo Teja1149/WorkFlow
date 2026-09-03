@@ -50,16 +50,23 @@ export async function getManagerDashboard(
       title,
       priority,
       status,
+      progress_percent,
       deadline,
+      deadline_time,
+      health,
+      carry_forward_count,
       project_id,
       assigned_to,
       created_at,
+
       assignee:assigned_to (
         id,
         first_name,
         last_name,
-        role
+        role,
+        employee_id
       ),
+
       projects:project_id (
         id,
         name,

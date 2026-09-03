@@ -16,7 +16,7 @@ export async function getEmployees(organizationId: string) {
 
 export async function createEmployee(
   organizationId: string,
-  requesterRole: 'SUPER_ADMIN' | 'MANAGER' | 'EMPLOYEE',
+  requesterRole: 'SUPER_ADMIN' | 'ADMIN' | 'MANAGER' | 'EMPLOYEE',
   requesterId: string,
   input: {
     email: string
@@ -25,13 +25,18 @@ export async function createEmployee(
     last_name?: string
     phone?: string
     designation?: string
+    employee_id?: string
     role: 'MANAGER' | 'EMPLOYEE'
     manager_id?: string | null
     joining_date?: string
   },
 ) {
-  if (requesterRole === 'MANAGER' && input.role !== 'EMPLOYEE') {
-    throw new Error('Managers are only permitted to create employees.')
+  if (
+    requesterRole !== 'SUPER_ADMIN' &&
+    requesterRole !== 'ADMIN' &&
+    input.role !== 'EMPLOYEE'
+  ) {
+    throw new Error('Only Admin or Super Admin can manage managers.')
   }
 
   // Default manager_id to creator if manager creates employee and manager_id is not specified
@@ -51,7 +56,9 @@ export async function createEmployee(
     throw new Error(authError?.message || 'Unable to create account.')
   }
 
-  const employeeId = `${input.role === 'MANAGER' ? 'MGR' : 'EMP'}-${Date.now()}`
+  const employeeId =
+    input.employee_id?.trim() ||
+    `${input.role === 'MANAGER' ? 'MGR' : 'EMP'}-${Math.floor(1000 + Math.random() * 9000)}`
 
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('profiles')
@@ -83,7 +90,7 @@ export async function createEmployee(
 
 export async function deleteEmployee(
   organizationId: string,
-  requesterRole: 'SUPER_ADMIN' | 'MANAGER' | 'EMPLOYEE',
+  requesterRole: 'SUPER_ADMIN' | 'ADMIN' | 'MANAGER' | 'EMPLOYEE',
   employeeId: string,
 ) {
   const { data: target, error: targetError } = await supabaseAdmin
@@ -100,8 +107,12 @@ export async function deleteEmployee(
     throw new Error('Super Admin accounts cannot be deleted.')
   }
 
-  if (requesterRole === 'MANAGER' && target.role !== 'EMPLOYEE') {
-    throw new Error('Managers are only permitted to delete employees.')
+  if (
+    requesterRole !== 'SUPER_ADMIN' &&
+    requesterRole !== 'ADMIN' &&
+    target.role !== 'EMPLOYEE'
+  ) {
+    throw new Error('Only Admin or Super Admin can manage managers.')
   }
 
   // 1. Delete values associated with daily updates of this employee

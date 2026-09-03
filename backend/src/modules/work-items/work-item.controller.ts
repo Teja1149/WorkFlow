@@ -11,7 +11,10 @@ import {
   getWorkConcerns,
   createWorkConcern,
   resolveConcern,
+  getWorkAssignmentHistory,
 } from './work-item.service.js'
+import { transitionWorkItemStatus } from './work-item-status.service.js'
+import { getActivity } from '../work-activity/work-activity.service.js'
 
 export async function listWorkItems(req: Request, res: Response) {
   try {
@@ -55,9 +58,12 @@ export async function addWorkItem(req: Request, res: Response) {
       })
     }
 
+    const role = req.profile?.role
+
     const workItem = await createWorkItem(
       organizationId,
       userId,
+      role,
       req.body,
     )
 
@@ -108,6 +114,50 @@ export async function editWorkItem(req: Request, res: Response) {
         error instanceof Error
           ? error.message
           : 'Unable to update work item.',
+    })
+  }
+}
+
+export async function updateWorkItemStatus(req: Request, res: Response) {
+  try {
+    const organizationId = req.profile?.organization_id
+    const userId = req.userId
+
+    if (!organizationId || !userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required.',
+      })
+    }
+
+    const { status, notes } = req.body
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status is required.',
+      })
+    }
+
+    const updated = await transitionWorkItemStatus(
+      organizationId,
+      userId,
+      req.profile?.role || 'EMPLOYEE',
+      req.params.id as string,
+      status,
+      notes,
+    )
+
+    return res.json({
+      success: true,
+      data: updated,
+    })
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to transition work item status.',
     })
   }
 }
@@ -386,6 +436,61 @@ export async function resolveWorkConcern(
         error instanceof Error
           ? error.message
           : 'Unable to resolve concern.',
+    })
+  }
+}
+
+export async function listWorkAssignmentHistoryController(
+  req: Request,
+  res: Response,
+) {
+  try {
+    const organizationId = req.profile?.organization_id
+
+    if (!organizationId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required.',
+      })
+    }
+
+    const data = await getWorkAssignmentHistory(
+      organizationId,
+      (req.params.workItemId || req.params.id) as string,
+    )
+
+    return res.json({
+      success: true,
+      data,
+    })
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to load assignment history.',
+    })
+  }
+}
+
+export async function listWorkActivity(req: Request, res: Response) {
+  try {
+    const workItemId = req.params.id as string
+
+    const activity = await getActivity(workItemId)
+
+    return res.json({
+      success: true,
+      data: activity,
+    })
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to load activity.',
     })
   }
 }

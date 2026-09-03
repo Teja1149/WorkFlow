@@ -4,6 +4,7 @@ import { requireRoles } from '../../middleware/roles.js'
 import {
   listProjects,
   addProject,
+  patchProject,
   removeProject,
   listProjectMembers,
   addMemberToProject,
@@ -15,42 +16,49 @@ const router = Router()
 router.get(
   '/',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER', 'EMPLOYEE'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'EMPLOYEE'),
   listProjects,
 )
 
 router.post(
   '/',
   requireAuth,
-  requireRoles('SUPER_ADMIN'),
+  requireRoles('SUPER_ADMIN', 'ADMIN'),
   addProject,
+)
+
+router.patch(
+  '/:id',
+  requireAuth,
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'EMPLOYEE'),
+  patchProject,
 )
 
 router.delete(
   '/:id',
   requireAuth,
-  requireRoles('SUPER_ADMIN'),
+  requireRoles('SUPER_ADMIN', 'ADMIN'),
   removeProject,
 )
 
 router.get(
   '/:id/members',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER', 'EMPLOYEE'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'EMPLOYEE'),
   listProjectMembers,
 )
 
 router.post(
   '/:id/members',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER'),
   addMemberToProject,
 )
 
 router.delete(
   '/:id/members/:userId',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER'),
   removeMemberFromProject,
 )
 

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -10,41 +10,88 @@ import {
   Bell,
   MessageSquare,
   Layers,
+  Layers3,
   Plus,
+  Volume2,
+  CalendarDays,
+  ShieldAlert,
+  Award,
+  Settings,
+  Target,
+  ChevronDown,
+  UserCheck,
+  Gauge,
+  Activity,
 } from 'lucide-react'
 import { useAuth } from '../features/auth/AuthContext'
 import { useNotifications } from '../features/notifications/NotificationContext'
+import { getAttentionCounts, type AttentionCounts } from '../features/work-execution/work-execution.service'
 
 const navGroups = [
   {
     title: 'OVERVIEW',
     items: [
       { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+      { name: 'My Day', path: '/my-day', icon: CalendarDays },
       { name: 'My Work', path: '/work', icon: Briefcase },
+      { name: 'Daily Work', path: '/daily-work', icon: CalendarDays },
       { name: 'Notifications', path: '/notifications', icon: Bell, hasBadge: true },
     ],
   },
   {
     title: 'WORK',
     items: [
+      { name: 'Execution Board', path: '/execution-board', icon: LayoutDashboard },
       { name: 'Projects', path: '/projects', icon: FolderKanban },
       { name: 'Conversations', path: '/conversations', icon: MessageSquare },
       { name: 'Sprints', path: '/sprints', icon: Flame },
     ],
   },
   {
-    title: 'DAILY',
+    title: 'MANAGEMENT',
     items: [
+      { name: 'Company Operations', path: '/company-operations', icon: ShieldAlert },
+      { name: 'Team Today', path: '/team-today', icon: Users },
+      { name: 'Command Center', path: '/company-command-center', icon: ShieldAlert },
+      { name: 'Performance', path: '/employee-performance', icon: Award },
+      { name: 'Work Settings', path: '/organization-settings', icon: Settings },
+      { name: 'Work Types', path: '/work-types', icon: Layers3 },
       { name: 'Employees', path: '/employees', icon: Users },
     ],
   },
 ]
 
 export default function AppLayout() {
-  const { profile, logout } = useAuth()
-  const { unreadCount } = useNotifications()
+  const { accessToken, profile, logout } = useAuth()
+  const { unreadCount, playTestSound } = useNotifications()
   const navigate = useNavigate()
   const location = useLocation()
+  const [attentionCounts, setAttentionCounts] = useState<AttentionCounts | null>(null)
+  const [showCreateMenu, setShowCreateMenu] = useState(false)
+  const createMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (createMenuRef.current && !createMenuRef.current.contains(event.target as Node)) {
+        setShowCreateMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  useEffect(() => {
+    if (!accessToken) return
+    const fetchCounts = () => {
+      getAttentionCounts(accessToken)
+        .then(setAttentionCounts)
+        .catch(() => {})
+    }
+
+    fetchCounts()
+    const interval = window.setInterval(fetchCounts, 60_000)
+    return () => window.clearInterval(interval)
+  }, [accessToken])
 
   useEffect(() => {
     const unlockAudio = () => {
@@ -58,6 +105,96 @@ export default function AppLayout() {
       window.removeEventListener('click', unlockAudio)
     }
   }, [])
+
+  const isSuperAdminOrAdmin = profile?.role === 'SUPER_ADMIN' || profile?.role === 'ADMIN'
+  const isManager = profile?.role === 'MANAGER'
+
+  const filteredNavGroups = useMemo(() => {
+    if (isSuperAdminOrAdmin) {
+      return [
+        {
+          title: 'OPERATIONS',
+          items: [
+            { name: 'Dashboard', path: '/admin-workboard', icon: LayoutDashboard },
+            { name: 'Projects', path: '/projects', icon: FolderKanban },
+            { name: 'Work Overview', path: '/work-overview', icon: Activity },
+            { name: 'Work Planner', path: '/work-distribution', icon: UserCheck },
+            { name: 'Work Types', path: '/work-types', icon: Layers3 },
+            { name: 'Employees', path: '/employees', icon: Users },
+          ],
+        },
+        {
+          title: 'REPORTS',
+          items: [
+            { name: 'Reports', path: '/reports', icon: CalendarDays },
+            { name: 'Target Analytics', path: '/company-analytics', icon: Target },
+          ],
+        },
+        {
+          title: 'SETTINGS',
+          items: [
+            { name: 'Settings', path: '/settings', icon: Settings },
+          ],
+        },
+      ]
+    }
+
+    if (isManager) {
+      return [
+        {
+          title: 'EXECUTION',
+          items: [
+            { name: 'Team Execution', path: '/admin-workboard', icon: LayoutDashboard },
+            { name: 'Work Distribution', path: '/work-distribution', icon: UserCheck },
+            { name: 'My Workload', path: '/my-workload', icon: Gauge },
+            { name: 'Set Daily Target', path: '/set-daily-target', icon: Target },
+            { name: 'Team Today', path: '/team-today', icon: Users, hasBadge: true },
+          ],
+        },
+        {
+          title: 'WORK',
+          items: [
+            { name: 'Projects', path: '/projects', icon: FolderKanban },
+            { name: 'Sprints', path: '/sprints', icon: Flame },
+            { name: 'Work Items', path: '/work', icon: Briefcase },
+            { name: 'Conversations', path: '/conversations', icon: MessageSquare },
+          ],
+        },
+        {
+          title: 'REPORTS',
+          items: [
+            { name: 'Daily Results', path: '/daily-results', icon: CalendarDays },
+            { name: 'Team Performance', path: '/employee-performance', icon: Award },
+          ],
+        },
+      ]
+    }
+
+    return [
+      {
+        title: 'MY WORK',
+        items: [
+          { name: 'My Day', path: '/my-day', icon: CalendarDays, hasBadge: true },
+          { name: 'My Workload', path: '/my-workload', icon: Gauge },
+          { name: 'Execution Board', path: '/execution-board', icon: LayoutDashboard },
+          { name: 'My Results', path: '/my-target-history', icon: Award },
+        ],
+      },
+      {
+        title: 'PROJECTS',
+        items: [
+          { name: 'My Projects', path: '/projects', icon: FolderKanban },
+          { name: 'Conversations', path: '/conversations', icon: MessageSquare },
+        ],
+      },
+      {
+        title: 'NOTIFICATIONS',
+        items: [
+          { name: 'Notifications', path: '/notifications', icon: Bell, hasBadge: true },
+        ],
+      },
+    ]
+  }, [profile?.role, isSuperAdminOrAdmin, isManager])
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-slate-900 font-sans flex">
@@ -78,35 +215,48 @@ export default function AppLayout() {
 
           {/* Grouped Navigation */}
           <nav className="space-y-5">
-            {navGroups.map((group) => (
+            {filteredNavGroups.map((group: any) => (
               <div key={group.title} className="space-y-1">
                 <div className="px-3 text-[11px] font-bold text-[#71717a] tracking-wider uppercase">
                   {group.title}
                 </div>
                 <div className="space-y-0.5 mt-1.5">
-                  {group.items.map(({ name, path, icon: Icon, hasBadge }) => (
-                    <NavLink
-                      key={path}
-                      to={path}
-                      className={({ isActive }) =>
-                        `flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-150 ${
-                          isActive
-                            ? 'bg-[#27272a] text-white font-semibold shadow-xs'
-                            : 'text-[#a1a1aa] hover:bg-[#1f1f23] hover:text-white'
-                        }`
-                      }
-                    >
-                      <div className="flex items-center gap-3">
-                        <Icon size={17} className="shrink-0" />
-                        <span>{name}</span>
-                      </div>
-                      {hasBadge && unreadCount > 0 && (
-                        <span className="bg-[#9f1239] text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs">
-                          {unreadCount}
-                        </span>
-                      )}
-                    </NavLink>
-                  ))}
+                  {group.items.map(({ name, path, icon: Icon, hasBadge }: any) => {
+                    let badgeValue = 0
+                    if (hasBadge && unreadCount > 0) {
+                      badgeValue = unreadCount
+                    } else if (path === '/company-operations' && attentionCounts) {
+                      badgeValue = attentionCounts.critical + attentionCounts.overdue + attentionCounts.atRisk + attentionCounts.blocked
+                    } else if (path === '/team-today' && attentionCounts) {
+                      badgeValue = attentionCounts.critical + attentionCounts.overdue
+                    } else if (path === '/my-day' && attentionCounts) {
+                      badgeValue = attentionCounts.critical
+                    }
+
+                    return (
+                      <NavLink
+                        key={path}
+                        to={path}
+                        className={({ isActive }) =>
+                          `flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-150 ${
+                            isActive
+                              ? 'bg-[#27272a] text-white font-semibold shadow-xs'
+                              : 'text-[#a1a1aa] hover:bg-[#1f1f23] hover:text-white'
+                          }`
+                        }
+                      >
+                        <div className="flex items-center gap-3">
+                          <Icon size={17} className="shrink-0" />
+                          <span>{name}</span>
+                        </div>
+                        {badgeValue > 0 && (
+                          <span className="bg-[#9f1239] text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs font-mono">
+                            {badgeValue}
+                          </span>
+                        )}
+                      </NavLink>
+                    )
+                  })}
                 </div>
               </div>
             ))}
@@ -150,6 +300,15 @@ export default function AppLayout() {
 
           <div className="flex items-center gap-3">
             <button
+              onClick={playTestSound}
+              className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 transition-colors text-slate-700 cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+              title="Test Notification Sound & Unlock Audio"
+            >
+              <Volume2 size={16} className="text-slate-600" />
+              <span className="hidden sm:inline">Test Sound</span>
+            </button>
+
+            <button
               onClick={() => navigate('/notifications')}
               className="relative p-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 transition-colors text-slate-700 cursor-pointer"
               title="Notifications"
@@ -162,13 +321,72 @@ export default function AppLayout() {
               )}
             </button>
 
-            <button
-              onClick={() => navigate('/work')}
-              className="bg-[#801424] text-white text-xs font-bold px-3.5 py-2 rounded-xl hover:bg-[#9f1239] transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-            >
-              <Plus size={15} />
-              <span>New Item</span>
-            </button>
+            {/* Step 253 — Global Context-Sensitive Create Menu */}
+            {(isSuperAdminOrAdmin || isManager) ? (
+              <div className="relative" ref={createMenuRef}>
+                <button
+                  onClick={() => setShowCreateMenu(!showCreateMenu)}
+                  className="bg-[#801424] text-white text-xs font-bold px-3.5 py-2 rounded-xl hover:bg-[#9f1239] transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Plus size={15} />
+                  <span>Create</span>
+                  <ChevronDown size={14} className={`transition-transform ${showCreateMenu ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showCreateMenu && (
+                  <div className="absolute right-0 mt-2 w-48 rounded-xl bg-white border border-slate-200 shadow-xl py-1.5 z-50 text-xs font-semibold text-slate-700 animate-fadeIn">
+                    <button
+                      onClick={() => {
+                        setShowCreateMenu(false)
+                        navigate('/set-daily-target')
+                      }}
+                      className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer font-bold text-[#801424]"
+                    >
+                      <Target size={14} />
+                      <span>Daily Target</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowCreateMenu(false)
+                        navigate('/work')
+                      }}
+                      className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                    >
+                      <Briefcase size={14} className="text-slate-400" />
+                      <span>Work Item</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowCreateMenu(false)
+                        navigate('/projects')
+                      }}
+                      className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                    >
+                      <FolderKanban size={14} className="text-slate-400" />
+                      <span>Project</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowCreateMenu(false)
+                        navigate('/sprints')
+                      }}
+                      className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                    >
+                      <Flame size={14} className="text-slate-400" />
+                      <span>Sprint</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <button
+                onClick={() => navigate('/work')}
+                className="bg-[#801424] text-white text-xs font-bold px-3.5 py-2 rounded-xl hover:bg-[#9f1239] transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Plus size={15} />
+                <span>New Item</span>
+              </button>
+            )}
           </div>
         </header>
 

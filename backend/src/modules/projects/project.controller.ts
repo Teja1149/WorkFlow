@@ -6,6 +6,7 @@ import {
   addProjectMember,
   removeProjectMember,
   deleteProject,
+  updateProject,
 } from './project.service.js'
 
 export async function listProjects(req: Request, res: Response) {
@@ -166,6 +167,35 @@ export async function removeProject(req: Request, res: Response) {
         error instanceof Error
           ? error.message
           : 'Unable to delete project.',
+    })
+  }
+}
+
+export async function patchProject(req: Request, res: Response) {
+  try {
+    const organizationId = req.profile?.organization_id
+    const projectId = req.params.id as string
+
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Organization not found.',
+      })
+    }
+
+    const updated = await updateProject(organizationId, projectId, req.body)
+
+    return res.json({
+      success: true,
+      data: updated,
+    })
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to update project.',
     })
   }
 }

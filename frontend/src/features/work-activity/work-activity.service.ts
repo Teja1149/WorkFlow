@@ -103,11 +103,10 @@ export async function addUpdate(
   token: string,
   workItemId: string,
   update_text: string,
-  progress_percent: number,
 ) {
   return request(token, `/work-items/${workItemId}/updates`, {
     method: 'POST',
-    body: JSON.stringify({ update_text, progress_percent }),
+    body: JSON.stringify({ update_text }),
   }) as Promise<WorkUpdate>
 }
 

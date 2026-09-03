@@ -122,8 +122,10 @@ export async function getProjectDailyUpdates(
 
   const query = params.toString()
 
-  return request<ProjectDailyUpdate[]>(
+  const data = await request<ProjectDailyUpdate[]>(
     token,
     `/projects/${projectId}/daily-updates${query ? `?${query}` : ''}`,
   )
+
+  return Array.isArray(data) ? data : []
 }

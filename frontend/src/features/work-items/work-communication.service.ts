@@ -70,12 +70,18 @@ export async function getWorkUpdates(token: string, workItemId: string) {
 export async function addWorkUpdate(
   token: string,
   workItemId: string,
-  update_text: string,
-  progress_percent: number,
+  payload:
+    | string
+    | {
+        update_text: string
+        progress_percent?: number
+      },
 ) {
+  const update_text =
+    typeof payload === 'string' ? payload : payload.update_text
   return request(token, `/work-items/${workItemId}/updates`, {
     method: 'POST',
-    body: JSON.stringify({ update_text, progress_percent }),
+    body: JSON.stringify({ update_text }),
   }) as Promise<WorkUpdate>
 }
 

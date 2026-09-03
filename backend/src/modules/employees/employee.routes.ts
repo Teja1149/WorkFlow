@@ -13,28 +13,28 @@ const router = Router()
 router.get(
   '/',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER'),
   listEmployees,
 )
 
 router.post(
   '/',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER'),
   addEmployee,
 )
 
 router.patch(
   '/:id',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER'),
   editEmployee,
 )
 
 router.delete(
   '/:id',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER'),
   removeEmployee,
 )
 

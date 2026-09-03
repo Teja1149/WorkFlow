@@ -7,7 +7,7 @@ import {
   listUpdates,
   createUpdate,
   listConcerns,
-  createConcern,
+  addConcernHandler,
   resolveConcernHandler,
   listActivity,
 } from './work-communication.controller.js'
@@ -56,7 +56,7 @@ router.post(
   '/:id/concerns',
   requireAuth,
   requireRoles('SUPER_ADMIN', 'MANAGER', 'EMPLOYEE'),
-  createConcern,
+  addConcernHandler,
 )
 
 router.patch(

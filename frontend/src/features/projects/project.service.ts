@@ -2,6 +2,17 @@ import type { UserProfile } from '../auth/auth.types'
 
 const API_URL = import.meta.env.VITE_API_URL || '/api'
 
+export type ProjectStatus =
+  | 'TODO'
+  | 'PLANNING'
+  | 'DEVELOPMENT'
+  | 'TESTING'
+  | 'DEPLOYMENT'
+  | 'COMPLETED'
+  | 'ACTIVE'
+  | 'ON_HOLD'
+  | 'ARCHIVED'
+
 export interface Project {
   id: string
   organization_id: string
@@ -9,12 +20,7 @@ export interface Project {
   project_key: string
   description: string | null
   methodology: 'SCRUM' | 'KANBAN'
-  status:
-    | 'PLANNING'
-    | 'ACTIVE'
-    | 'ON_HOLD'
-    | 'COMPLETED'
-    | 'ARCHIVED'
+  status: ProjectStatus
   project_manager_id: string | null
   start_date: string | null
   target_date: string | null
@@ -55,7 +61,8 @@ async function request(
 }
 
 export async function getProjects(token: string) {
-  return request(token, '/projects') as Promise<Project[]>
+  const data = await request(token, '/projects')
+  return (Array.isArray(data) ? data : []) as Project[]
 }
 
 export async function createProject(
@@ -65,7 +72,7 @@ export async function createProject(
     project_key: string
     description?: string
     methodology: 'SCRUM' | 'KANBAN'
-    status?: 'PLANNING' | 'ACTIVE'
+    status?: ProjectStatus
     project_manager_id?: string | null
     start_date?: string | null
     target_date?: string | null
@@ -77,8 +84,28 @@ export async function createProject(
   }) as Promise<Project>
 }
 
+export async function updateProject(
+  token: string,
+  projectId: string,
+  data: {
+    name?: string
+    description?: string
+    status?: ProjectStatus
+    methodology?: 'SCRUM' | 'KANBAN'
+    project_manager_id?: string | null
+    start_date?: string | null
+    target_date?: string | null
+  },
+) {
+  return request(token, `/projects/${projectId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  }) as Promise<Project>
+}
+
 export async function getProjectMembers(token: string, projectId: string) {
-  return request(token, `/projects/${projectId}/members`) as Promise<ProjectMember[]>
+  const data = await request(token, `/projects/${projectId}/members`)
+  return (Array.isArray(data) ? data : []) as ProjectMember[]
 }
 
 export async function addProjectMember(token: string, projectId: string, userId: string) {
