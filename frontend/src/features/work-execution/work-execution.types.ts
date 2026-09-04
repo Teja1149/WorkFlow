@@ -17,6 +17,37 @@ export interface DailyWorkItem {
   milestone_id?: string | null
   work_type_id?: string | null
 
+  target_quantity?: number | null
+  completed_quantity?: number | null
+  quantity_unit?: string | null
+  pacing_start_date?: string | null
+  pacing_enabled?: boolean
+  pacing?: {
+    enabled: boolean
+    status:
+      | 'NOT_TRACKED'
+      | 'AHEAD'
+      | 'ON_TRACK'
+      | 'AT_RISK'
+      | 'BEHIND'
+      | 'OVERDUE'
+    targetQuantity: number
+    completedQuantity: number
+    expectedQuantity: number
+    todayTarget?: number
+    backlog?: number
+    isBacklog?: boolean
+    remainingQuantity: number
+    progressPercent: number
+    totalDays: number
+    elapsedDays: number
+    remainingDays: number
+    initialPerDay?: number
+    requiredPerDay: number
+    workloadIncreased?: boolean
+    recommendedIntervalDays: number | null
+  }
+
   projects?: {
     id: string
     name: string

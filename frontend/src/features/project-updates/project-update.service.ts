@@ -129,3 +129,33 @@ export async function getProjectDailyUpdates(
 
   return Array.isArray(data) ? data : []
 }
+
+export async function getCompanyDailyUpdates(
+  token: string,
+  filters?: {
+    employeeId?: string
+    fromDate?: string
+    toDate?: string
+  },
+) {
+  const params = new URLSearchParams()
+
+  if (filters?.employeeId) {
+    params.set('employeeId', filters.employeeId)
+  }
+  if (filters?.fromDate) {
+    params.set('fromDate', filters.fromDate)
+  }
+  if (filters?.toDate) {
+    params.set('toDate', filters.toDate)
+  }
+
+  const query = params.toString()
+
+  const data = await request<ProjectDailyUpdate[]>(
+    token,
+    `/company/daily-updates${query ? `?${query}` : ''}`,
+  )
+
+  return Array.isArray(data) ? data : []
+}

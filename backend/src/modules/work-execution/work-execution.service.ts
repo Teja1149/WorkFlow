@@ -375,9 +375,7 @@ export async function getTodayWork(
     `)
     .eq('organization_id', organizationId)
 
-  if (role === 'EMPLOYEE') {
-    query = query.eq('assigned_to', userId)
-  }
+  query = query.eq('assigned_to', userId)
 
   const { data, error } = await query
     .order('deadline', {

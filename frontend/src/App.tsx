@@ -116,22 +116,39 @@ class ErrorBoundary extends React.Component<
 
   render() {
     if (this.state.hasError) {
+      const isChunkError =
+        this.state.error?.message?.includes('dynamically imported module') ||
+        this.state.error?.message?.includes('Loading chunk')
+
       return (
         <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
           <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-xl max-w-md w-full text-center space-y-4">
             <h2 className="text-xl font-bold text-rose-700">Something went wrong</h2>
             <p className="text-xs text-slate-500">
-              {this.state.error?.message || 'An unexpected error occurred while loading this view.'}
+              {isChunkError
+                ? 'A newer version of the application or module is available.'
+                : this.state.error?.message || 'An unexpected error occurred while loading this view.'}
             </p>
-            <button
-              onClick={() => {
-                this.setState({ hasError: false, error: null })
-                window.location.href = '/dashboard'
-              }}
-              className="px-5 py-2.5 bg-[#801424] hover:bg-[#9f1239] text-white font-bold text-xs rounded-xl transition cursor-pointer"
-            >
-              Return to Dashboard
-            </button>
+            <div className="flex items-center justify-center gap-2 pt-2">
+              <button
+                onClick={() => {
+                  this.setState({ hasError: false, error: null })
+                  window.location.reload()
+                }}
+                className="px-5 py-2.5 bg-[#801424] hover:bg-[#9f1239] text-white font-bold text-xs rounded-xl transition cursor-pointer"
+              >
+                Reload Page
+              </button>
+              <button
+                onClick={() => {
+                  this.setState({ hasError: false, error: null })
+                  window.location.href = '/'
+                }}
+                className="px-4 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl transition cursor-pointer"
+              >
+                Return to Dashboard
+              </button>
+            </div>
           </div>
         </div>
       )
@@ -363,7 +380,7 @@ export default function App() {
             <Route
               path="/employees/:employeeId/work"
               element={
-                <RoleRoute roles={['MANAGER']}>
+                <RoleRoute roles={['SUPER_ADMIN', 'ADMIN', 'MANAGER']}>
                   <EmployeeWorkDetail />
                 </RoleRoute>
               }
@@ -372,7 +389,7 @@ export default function App() {
             <Route
               path="/employees/:employeeId/target-history"
               element={
-                <RoleRoute roles={['MANAGER']}>
+                <RoleRoute roles={['SUPER_ADMIN', 'ADMIN', 'MANAGER']}>
                   <EmployeeTargetHistory />
                 </RoleRoute>
               }

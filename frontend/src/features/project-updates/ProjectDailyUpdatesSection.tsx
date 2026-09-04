@@ -255,19 +255,41 @@ export default function ProjectDailyUpdatesSection({ projectId }: Props) {
   function findFieldValue(upd: ProjectDailyUpdate, field: ProjectUpdateField): string {
     if (!upd) return ''
     const valList = upd.values || (upd as any).project_daily_update_values || []
-    if (!Array.isArray(valList) || valList.length === 0) return ''
 
-    const matched = valList.find(
-      (v: any) =>
-        v.field_id === field.id ||
-        (field.field_key && v.field_id === field.field_key) ||
-        (v.project_update_fields &&
-          (v.project_update_fields.field_key === field.field_key ||
-            v.project_update_fields.field_name?.toLowerCase().trim() ===
-              field.field_name?.toLowerCase().trim())),
-    )
+    // 1. Search in structured value records
+    if (Array.isArray(valList) && valList.length > 0) {
+      const normalizedKey = (field.field_key || field.field_name || '')
+        .toLowerCase()
+        .trim()
+        .replace(/[\s-]+/g, '_')
 
-    return matched?.value_text ?? ''
+      const matched = valList.find((v: any) => {
+        if (!v) return false
+        if (v.field_id === field.id) return true
+        if (field.field_key && v.field_id === field.field_key) return true
+
+        const pKey = v.project_update_fields?.field_key?.toLowerCase().trim().replace(/[\s-]+/g, '_')
+        const pName = v.project_update_fields?.field_name?.toLowerCase().trim().replace(/[\s-]+/g, '_')
+
+        return pKey === normalizedKey || pName === normalizedKey
+      })
+
+      if (matched && matched.value_text !== undefined && matched.value_text !== null && matched.value_text !== '') {
+        return String(matched.value_text)
+      }
+    }
+
+    // 2. Check if update object itself has dynamic keys or report_data
+    const anyUpd = upd as any
+    if (anyUpd.report_data && typeof anyUpd.report_data === 'object') {
+      const direct =
+        anyUpd.report_data[field.field_key] ??
+        anyUpd.report_data[field.id] ??
+        anyUpd.report_data[field.field_name]
+      if (direct !== undefined && direct !== null) return String(direct)
+    }
+
+    return ''
   }
 
   // Prefill form values if employee has already submitted today's report

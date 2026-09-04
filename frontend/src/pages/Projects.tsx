@@ -144,7 +144,7 @@ export default function Projects() {
           </p>
         </div>
 
-        {(profile?.role === 'SUPER_ADMIN' || profile?.role === 'ADMIN') && (
+        {(profile?.role === 'SUPER_ADMIN' || profile?.role === 'ADMIN' || profile?.role === 'MANAGER') && (
           <button
             onClick={() => setModalOpen(true)}
             className="flex items-center gap-2 bg-[#801424] hover:bg-[#9f1239] text-white px-4 py-2.5 rounded-xl font-bold shadow-xs transition cursor-pointer"

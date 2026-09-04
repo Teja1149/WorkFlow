@@ -243,7 +243,16 @@ export async function submitProjectDailyUpdate(
 ) {
   const todayStr = new Date().toISOString().split('T')[0]
 
-  // Check if an update for today already exists for this employee & project
+  // 1. Get or resolve the update template for this project
+  const { data: template } = await supabaseAdmin
+    .from('project_update_templates')
+    .select('id')
+    .eq('project_id', projectId)
+    .maybeSingle()
+
+  const templateId = template?.id || null
+
+  // 2. Check if an update for today already exists for this employee & project
   const { data: existingRecord } = await supabaseAdmin
     .from('project_daily_updates')
     .select('id, created_at')
@@ -259,6 +268,7 @@ export async function submitProjectDailyUpdate(
     const { data: updated, error: updateErr } = await supabaseAdmin
       .from('project_daily_updates')
       .update({
+        template_id: templateId,
         paragraph_update: input.paragraphUpdate || '',
         progress_percent: input.progressPercent ?? 0,
         updated_at: new Date().toISOString(),
@@ -277,6 +287,7 @@ export async function submitProjectDailyUpdate(
       .from('project_daily_updates')
       .insert({
         project_id: projectId,
+        template_id: templateId,
         employee_id: employeeId,
         update_date: todayStr,
         paragraph_update: input.paragraphUpdate || '',
@@ -291,7 +302,7 @@ export async function submitProjectDailyUpdate(
     updateRecord = inserted
   }
 
-  // Update dynamic metric field values
+  // 3. Update dynamic metric field values
   if (input.values && Object.keys(input.values).length > 0) {
     // Remove previous field values for today's record before inserting updated ones
     await supabaseAdmin
@@ -299,27 +310,36 @@ export async function submitProjectDailyUpdate(
       .delete()
       .eq('daily_update_id', updateRecord.id)
 
-    // Resolve all field keys/names/IDs to actual project_update_fields IDs
-    const { data: templateFields } = await supabaseAdmin
-      .from('project_update_fields')
-      .select('id, field_key, field_name')
-      .eq('project_id', projectId)
+    // Resolve all field keys/names/IDs to actual project_update_fields IDs using template_id
+    let templateFields: any[] = []
+    if (templateId) {
+      const { data: fields } = await supabaseAdmin
+        .from('project_update_fields')
+        .select('id, field_key, field_name')
+        .eq('template_id', templateId)
+      templateFields = fields || []
+    }
 
     const resolvedValues = new Map<string, string>()
 
     for (const [key, val] of Object.entries(input.values)) {
       if (val === undefined || val === null || String(val).trim() === '') continue
 
-      // Match key against field.id, field.field_key, or field.field_name
-      const matchedField = (templateFields || []).find(
+      const normalizedKey = key.toLowerCase().trim().replace(/[\s-]+/g, '_')
+
+      // Match key against field.id, field.field_key, or normalized field_name
+      const matchedField = templateFields.find(
         (f) =>
           f.id === key ||
           f.field_key === key ||
-          f.field_name?.toLowerCase().trim() === key.toLowerCase().trim(),
+          (f.field_key && f.field_key.toLowerCase().trim().replace(/[\s-]+/g, '_') === normalizedKey) ||
+          f.field_name?.toLowerCase().trim() === key.toLowerCase().trim() ||
+          f.field_name?.toLowerCase().trim().replace(/[\s-]+/g, '_') === normalizedKey,
       )
 
-      const targetFieldId = matchedField ? matchedField.id : key
-      resolvedValues.set(targetFieldId, String(val))
+      if (matchedField) {
+        resolvedValues.set(matchedField.id, String(val))
+      }
     }
 
     const valuePayloads = Array.from(resolvedValues.entries()).map(
@@ -339,6 +359,74 @@ export async function submitProjectDailyUpdate(
         console.error('Error inserting project daily update values:', valuesError)
       }
     }
+  }
+
+  // 4. Synchronize update to Work Items & Company Workboard
+  try {
+    const { data: activeWorkItems } = await supabaseAdmin
+      .from('work_items')
+      .select('id, title, target_quantity, completed_quantity, status')
+      .eq('project_id', projectId)
+      .eq('assigned_to', employeeId)
+      .neq('status', 'DONE')
+      .order('created_at', { ascending: false })
+
+    if (activeWorkItems && activeWorkItems.length > 0) {
+      const targetWork = activeWorkItems[0]
+
+      // Extract numeric metric if present (e.g. videos done, units done, etc.)
+      let numericCount: number | null = null
+      for (const [k, v] of Object.entries(input.values || {})) {
+        const num = Number(v)
+        if (!isNaN(num) && num > 0 && /done|completed|videos|count|quantity|actual/i.test(k)) {
+          numericCount = num
+          break
+        }
+      }
+
+      const summaryMsg = input.paragraphUpdate
+        ? input.paragraphUpdate
+        : `Daily update submitted: ${input.progressPercent ?? 0}% progress${
+            numericCount !== null ? ` (${numericCount} completed)` : ''
+          }`
+
+      await supabaseAdmin.from('work_updates').insert({
+        work_item_id: targetWork.id,
+        user_id: employeeId,
+        update_text: summaryMsg,
+        report_data: {
+          ...input.values,
+          progress_percent: input.progressPercent,
+          paragraph_update: input.paragraphUpdate,
+          actual_value: numericCount,
+        },
+      })
+
+      if (numericCount !== null) {
+        const newCompleted = Math.max(
+          Number(targetWork.completed_quantity || 0),
+          numericCount,
+        )
+        const isDone =
+          Number(targetWork.target_quantity || 0) > 0 &&
+          newCompleted >= Number(targetWork.target_quantity)
+
+        await supabaseAdmin
+          .from('work_items')
+          .update({
+            completed_quantity: newCompleted,
+            progress_percent:
+              Number(targetWork.target_quantity || 0) > 0
+                ? Math.min(100, Math.round((newCompleted / Number(targetWork.target_quantity)) * 100))
+                : input.progressPercent ?? 0,
+            status: isDone ? 'DONE' : targetWork.status === 'TODO' ? 'IN_PROGRESS' : targetWork.status,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', targetWork.id)
+      }
+    }
+  } catch (syncErr) {
+    console.error('Failed to sync daily update to work items:', syncErr)
   }
 
   // Send real-time notification to Managers & Admins
@@ -473,6 +561,81 @@ export async function getProjectDailyUpdates(
   }
 
   const mapped = (data || []).map((item: any) => ({
+    ...item,
+    values: item.values || item.project_daily_update_values || [],
+  }))
+
+  return mapped
+}
+
+export async function getCompanyDailyUpdates(
+  organizationId: string,
+  filters: DailyUpdateFilters = {},
+) {
+  let query = supabaseAdmin
+    .from('project_daily_updates')
+    .select(`
+      id,
+      project_id,
+      template_id,
+      employee_id,
+      update_date,
+      paragraph_update,
+      progress_percent,
+      created_at,
+      updated_at,
+      projects:project_id (
+        id,
+        name,
+        project_key,
+        organization_id
+      ),
+      profiles:employee_id (
+        id,
+        first_name,
+        last_name,
+        email,
+        employee_id
+      ),
+      project_daily_update_values (
+        id,
+        daily_update_id,
+        field_id,
+        value_text,
+        project_update_fields (
+          field_name,
+          field_key,
+          field_type,
+          display_order
+        )
+      )
+    `)
+    .order('update_date', { ascending: false })
+    .order('created_at', { ascending: false })
+
+  if (filters.fromDate) {
+    query = query.gte('update_date', filters.fromDate)
+  }
+  if (filters.toDate) {
+    query = query.lte('update_date', filters.toDate)
+  }
+  if (filters.employeeId) {
+    query = query.eq('employee_id', filters.employeeId)
+  }
+
+  const { data, error } = await query
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  const filtered = (data || []).filter(
+    (item: any) =>
+      !item.projects?.organization_id ||
+      item.projects?.organization_id === organizationId,
+  )
+
+  const mapped = filtered.map((item: any) => ({
     ...item,
     values: item.values || item.project_daily_update_values || [],
   }))

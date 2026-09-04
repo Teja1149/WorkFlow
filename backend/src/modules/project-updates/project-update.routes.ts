@@ -8,9 +8,16 @@ import {
   getDailyUpdatesController,
   submitTeamUpdateController,
   getTeamUpdatesController,
+  getCompanyDailyUpdatesController,
 } from './project-update.controller.js'
 
 const router = Router()
+
+router.get(
+  '/company/daily-updates',
+  requireAuth,
+  getCompanyDailyUpdatesController,
+)
 
 router.post(
   '/projects/:projectId/update-template',

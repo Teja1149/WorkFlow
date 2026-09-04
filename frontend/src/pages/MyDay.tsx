@@ -113,6 +113,12 @@ function WorkCard({
                 {urgency}
               </span>
             )}
+
+            {item.target_quantity && Number(item.target_quantity) > 0 && (
+              <span className="rounded-full bg-rose-50 border border-rose-200 px-2.5 py-1 text-[10px] font-bold text-[#801424]">
+                {item.completed_quantity || 0} / {item.target_quantity} {item.quantity_unit || 'items'} completed
+              </span>
+            )}
           </div>
 
           <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1 text-xs text-slate-500">

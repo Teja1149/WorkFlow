@@ -241,3 +241,28 @@ export async function getLiveOverview(token: string): Promise<LiveOverviewData> 
   return result.data
 }
 
+export async function getEmployeeCapacity(
+  accessToken: string,
+) {
+  const response = await fetch(
+    `${API_URL}/dashboard/employee-capacity`,
+    {
+      headers: {
+        Authorization:
+          `Bearer ${accessToken}`,
+      },
+    },
+  )
+
+  const result = await response.json()
+
+  if (!response.ok) {
+    throw new Error(
+      result?.message ||
+        'Unable to load employee capacity.',
+    )
+  }
+
+  return result.data || result
+}
+

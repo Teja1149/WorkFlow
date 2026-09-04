@@ -46,6 +46,8 @@ import {
   generateRecurringWork,
 } from '../features/recurring-work/recurring-work.service'
 import { getReassignmentRecommendations } from '../features/work-analytics/work-analytics.service'
+import { getEmployeeCapacity } from '../features/dashboard/dashboard.service'
+import { getCompanyDailyUpdates } from '../features/project-updates/project-update.service'
 import type { DailyTarget } from '../features/daily-targets/daily-target.types'
 import WorkDetailsDrawer from '../features/work-items/WorkDetailsDrawer'
 import {
@@ -54,6 +56,57 @@ import {
 import {
   targetAchievement,
 } from '../features/daily-targets/daily-target.ui'
+import {
+  getWorkUrgencyScore,
+  useDeadlineCountdown,
+} from '../features/work-items/useDeadlineCountdown'
+import {
+  groupWorkByEmployee,
+} from '../features/work-items/workboard-grouping'
+
+type EmployeeCapacity = {
+  employee: {
+    id: string
+    first_name: string
+    last_name?: string | null
+    employee_id?: string | null
+  }
+
+  dailyCapacityHours: number
+
+  assignedWork: number
+
+  activeProjectCount: number
+
+  estimatedRemainingHours: number
+
+  requiredDailyHours: number
+
+  availableDailyHours: number
+
+  utilizationPercent: number
+
+  workloadStatus:
+    | 'AVAILABLE'
+    | 'NORMAL'
+    | 'HIGH'
+    | 'OVERLOADED'
+
+  assignmentRisk:
+    | 'SAFE_TO_ASSIGN'
+    | 'ASSIGN_WITH_CAUTION'
+    | 'DO_NOT_ASSIGN'
+
+  overdueCount: number
+
+  criticalCount: number
+
+  blockedCount: number
+
+  dueTodayCount: number
+
+  dueWithin48HoursCount: number
+}
 
 type Employee = {
   id: string
@@ -73,6 +126,7 @@ type EmployeeRow = {
   capacityUtilization: number
   isOverloaded: boolean
   highestSeverity: 'CRITICAL' | 'RED' | 'ORANGE' | 'AMBER' | 'GREEN'
+  todayDailyUpdate?: any | null
 }
 
 function fullName(employee: Employee) {
@@ -150,6 +204,8 @@ export default function AdminWorkboard() {
   const [projects, setProjects] = useState<Project[]>([])
   const [workTypes, setWorkTypes] = useState<WorkType[]>([])
   const [capacities, setCapacities] = useState<Record<string, { utilizationPercent: number; isOverloaded: boolean }>>({})
+  const [employeeCapacity, setEmployeeCapacity] = useState<EmployeeCapacity[]>([])
+  const [companyDailyUpdates, setCompanyDailyUpdates] = useState<any[]>([])
   const [settings, setSettings] = useState<OrganizationWorkSettings | null>(null)
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
@@ -166,6 +222,17 @@ export default function AdminWorkboard() {
   >('NEW')
   const [toastMessage, setToastMessage] = useState<string | null>(null)
 
+  async function loadEmployeeCapacity() {
+    if (!accessToken) return
+
+    try {
+      const data = await getEmployeeCapacity(accessToken)
+      setEmployeeCapacity(Array.isArray(data) ? data : [])
+    } catch (error) {
+      console.error('Unable to load employee capacity:', error)
+    }
+  }
+
   async function loadData() {
     if (!accessToken) return
     setError('')
@@ -179,6 +246,7 @@ export default function AdminWorkboard() {
         workTypeData,
         analyticsData,
         workSettings,
+        dailyUpdatesData,
       ] = await Promise.all([
         getEmployees(accessToken),
         getWorkItems(accessToken).catch(() => []),
@@ -187,6 +255,8 @@ export default function AdminWorkboard() {
         getWorkTypes(accessToken).catch(() => []),
         getReassignmentRecommendations(accessToken).catch(() => null),
         getOrganizationWorkSettings(accessToken).catch(() => null),
+        getCompanyDailyUpdates(accessToken).catch(() => []),
+        loadEmployeeCapacity(),
       ])
 
       setEmployees(
@@ -201,6 +271,7 @@ export default function AdminWorkboard() {
       setDailyTargets(targetData?.targets || [])
       setProjects(Array.isArray(projectData) ? projectData : [])
       setWorkTypes(Array.isArray(workTypeData) ? workTypeData : [])
+      setCompanyDailyUpdates(Array.isArray(dailyUpdatesData) ? dailyUpdatesData : [])
       setSettings(workSettings)
 
       if (Array.isArray(analyticsData)) {
@@ -291,8 +362,11 @@ export default function AdminWorkboard() {
           if (a.status === 'DONE' && b.status !== 'DONE') return 1
           if (a.status !== 'DONE' && b.status === 'DONE') return -1
 
-          // Within active work, earliest deadline first.
+          // Within active work, highest urgency score first (OVERDUE -> CRITICAL -> URGENT -> nearest deadline).
           if (a.status !== 'DONE' && b.status !== 'DONE') {
+            const urgencyDiff = getWorkUrgencyScore(b) - getWorkUrgencyScore(a)
+            if (urgencyDiff !== 0) return urgencyDiff
+
             return (
               new Date(a.deadline || '9999-12-31').getTime() -
               new Date(b.deadline || '9999-12-31').getTime()
@@ -337,6 +411,14 @@ export default function AdminWorkboard() {
 
         const highestSeverity = getRowHighestSeverity(employeeTargets, current)
 
+        const todayStr = new Date().toISOString().split('T')[0]
+        const todayDailyUpdate =
+          companyDailyUpdates.find(
+            (u) =>
+              (u.employee_id === employee.id || u.profiles?.id === employee.id) &&
+              u.update_date.startsWith(todayStr),
+          ) || null
+
         return {
           employee,
           current,
@@ -346,6 +428,7 @@ export default function AdminWorkboard() {
           capacityUtilization: cap.utilizationPercent,
           isOverloaded: cap.isOverloaded,
           highestSeverity,
+          todayDailyUpdate,
         }
       })
 
@@ -355,7 +438,7 @@ export default function AdminWorkboard() {
         severityScore(b.highestSeverity, b.current.length) -
         severityScore(a.highestSeverity, a.current.length),
     )
-  }, [employees, workItems, dailyTargets, capacities, search])
+  }, [employees, workItems, dailyTargets, capacities, companyDailyUpdates, search])
 
   const summary = useMemo(() => {
     const active = workItems.filter((item) => item.status !== 'DONE')
@@ -463,16 +546,16 @@ export default function AdminWorkboard() {
 
         {/* HORIZONTAL EMPLOYEE WORKBOARD WITH FIXED ACTION COLUMN */}
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs">
-          <div className="grid grid-cols-[220px_minmax(0,1fr)_120px] border-b border-slate-200 bg-slate-50">
-            <div className="px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-              EMPLOYEE
+          <div className="grid grid-cols-[260px_minmax(0,1fr)_120px] border-b border-slate-800 bg-slate-950">
+            <div className="px-5 py-3 text-[11px] font-extrabold uppercase tracking-wider text-white bg-slate-950 border-r border-slate-800">
+              EMPLOYEE & DAILY REPORT
             </div>
 
-            <div className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            <div className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 bg-slate-50">
               CURRENT WORKS
             </div>
 
-            <div className="px-4 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            <div className="px-4 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-slate-500 bg-slate-50">
               ACTION
             </div>
           </div>
@@ -503,35 +586,29 @@ export default function AdminWorkboard() {
         </div>
       </div>
 
-      {/* Unified Assign Work Drawer */}
+      {/* Slide-over Drawer for Assigning Work */}
       {assignOpen && (
-        <div className="fixed inset-0 z-50 overflow-hidden">
-          <div
-            className="absolute inset-0 bg-slate-900/40 backdrop-blur-xs transition-opacity"
-            onClick={() => setAssignOpen(false)}
-          />
-
-          <aside className="absolute right-0 top-0 h-full w-full max-w-xl overflow-y-auto bg-white shadow-2xl animate-slideInRight flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between border-b border-slate-100 p-6">
-                <div>
-                  <h2 className="text-lg font-black text-slate-900">
-                    Plan & Assign Work
-                  </h2>
-
-                  <p className="mt-1 text-xs text-slate-500">
-                    Configure the work, target, schedule and people in one place.
-                  </p>
-                </div>
-
-                <button
-                  onClick={() => setAssignOpen(false)}
-                  className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
-                >
-                  <X className="h-5 w-5" />
-                </button>
+        <div className="fixed inset-0 z-50 overflow-hidden bg-slate-900/40 backdrop-blur-xs flex justify-end animate-fadeIn">
+          <aside className="w-full max-w-xl bg-white h-full shadow-2xl overflow-y-auto flex flex-col">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">
+                  Assign Work
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Assign work items, targets, and project deliverables to team members.
+                </p>
               </div>
+              <button
+                type="button"
+                onClick={() => setAssignOpen(false)}
+                className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
 
+            <div className="p-6 flex-1">
               <UnifiedAssignWorkDrawer
                 initialEmployee={assignEmployee}
                 initialSourceMode={assignStartMode}
@@ -541,6 +618,7 @@ export default function AdminWorkboard() {
                 workTypes={workTypes}
                 dailyTargets={dailyTargets}
                 capacities={capacities}
+                employeeCapacity={employeeCapacity}
                 onClose={() => setAssignOpen(false)}
                 onAssigned={async (summaryTitle) => {
                   setAssignOpen(false)
@@ -584,22 +662,22 @@ function EmployeeWorkRow({
 }) {
   return (
     <div className="bg-white hover:bg-slate-50/40 transition">
-      <div className="grid grid-cols-[220px_minmax(0,1fr)_120px] min-h-47.5 items-stretch">
+      <div className="grid grid-cols-[260px_minmax(0,1fr)_120px] min-h-47.5 items-stretch">
 
-        {/* EMPLOYEE */}
-        <div className="border-r border-slate-100 bg-white px-5 py-5 flex flex-col justify-center">
+        {/* EMPLOYEE & DAILY REPORT CARD - SLEEK BLACK BACKGROUND */}
+        <div className="border-r border-slate-800 bg-[#0f172a] hover:bg-[#090d16] px-4 py-4 flex flex-col justify-between transition-colors">
           <button
             type="button"
             onClick={onEmployeeClick}
-            className="flex w-full items-start gap-3 text-left cursor-pointer group"
+            className="flex w-full items-start gap-2.5 text-left cursor-pointer group"
           >
             <div className="relative shrink-0">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#801424] text-xs font-bold text-white shadow-sm">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#801424] text-xs font-bold text-white shadow-md ring-2 ring-slate-700">
                 {getInitials(row.employee)}
               </div>
 
               <span
-                className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-white ${
+                className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-slate-900 ${
                   row.highestSeverity === 'CRITICAL' ||
                   row.highestSeverity === 'RED'
                     ? 'bg-rose-500'
@@ -612,24 +690,71 @@ function EmployeeWorkRow({
               />
             </div>
 
-            <div className="min-w-0 pt-0.5">
-              <p className="truncate text-sm font-bold text-slate-900 group-hover:text-[#801424]">
+            <div className="min-w-0 pt-0.5 flex-1">
+              <p className="truncate text-xs font-bold text-white group-hover:text-rose-300 transition-colors">
                 {fullName(row.employee)}
               </p>
 
-              <p className="mt-1 text-xs text-slate-400">
+              <p className="mt-0.5 text-[11px] text-slate-400 font-medium">
                 {row.current.filter((item) => item.status !== 'DONE').length} active
                 {' · '}
-                {row.current.filter((item) => item.status === 'DONE').length} completed
+                {row.current.filter((item) => item.status === 'DONE').length} done
               </p>
 
               {row.isOverloaded && (
-                <p className="mt-2 text-[10px] font-bold text-red-600">
+                <p className="mt-1 text-[9px] font-bold text-rose-400">
                   OVERLOADED
                 </p>
               )}
             </div>
           </button>
+
+          {/* TODAY'S DAILY REPORT TEMPLATE METRICS & OUTPUT */}
+          <div className="mt-2.5 pt-2 border-t border-slate-800/80 text-[10px]">
+            {row.todayDailyUpdate ? (
+              <div className="bg-emerald-950/60 border border-emerald-500/40 rounded-xl p-2.5 space-y-1.5 shadow-md">
+                <div className="flex items-center justify-between font-bold text-emerald-300 text-[9.5px]">
+                  <span className="flex items-center gap-1.5 truncate max-w-35">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block shrink-0 animate-pulse"></span>
+                    <span className="truncate text-emerald-200">{row.todayDailyUpdate.projects?.name || 'Daily Report'}</span>
+                  </span>
+                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.2 rounded text-[8.5px] font-extrabold shrink-0">
+                    {row.todayDailyUpdate.progress_percent || 0}%
+                  </span>
+                </div>
+
+                {/* Submitted Dynamic Metrics (e.g. No of videos done, pending, etc.) */}
+                {row.todayDailyUpdate.values && row.todayDailyUpdate.values.length > 0 && (
+                  <div className="flex flex-wrap gap-1 pt-0.5">
+                    {row.todayDailyUpdate.values.map((v: any, idx: number) => {
+                      const label = v.project_update_fields?.field_name || v.field_name || 'Metric'
+                      const val = v.value_text
+                      if (val === undefined || val === null || val === '') return null
+                      return (
+                        <span
+                          key={idx}
+                          className="bg-slate-900/90 text-slate-200 px-1.5 py-0.5 rounded-md border border-emerald-500/30 text-[9px] font-semibold shadow-xs"
+                        >
+                          <strong className="text-emerald-300 font-bold">{label}:</strong> {val}
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {row.todayDailyUpdate.paragraph_update && (
+                  <p className="text-slate-300 text-[9.5px] line-clamp-1 italic font-medium pt-0.5">
+                    "{row.todayDailyUpdate.paragraph_update}"
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between text-slate-400 text-[9.5px] bg-slate-900/80 px-2.5 py-1.5 rounded-lg border border-slate-800 shadow-xs">
+                <span className="font-medium text-slate-400">Daily Report:</span>
+                <span className="font-bold text-rose-400 bg-rose-950/60 px-1.5 py-0.2 rounded border border-rose-800/40">Pending</span>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* WORKS — HORIZONTAL SCROLLABLE */}
@@ -682,16 +807,18 @@ function WorkCard({
 }) {
   const health = getWorkItemHealth(item)
   const isOverdue = health === 'RED'
-  const progress = Math.min(
-    100,
-    Math.max(0, Number(item.progress_percent || 0)),
-  )
+  const hasQuantityTarget = Number(item.target_quantity || 0) > 0
+  const progress = hasQuantityTarget
+    ? Math.min(100, Math.round((Number(item.completed_quantity || 0) / Number(item.target_quantity)) * 100))
+    : Math.min(100, Math.max(0, Number(item.progress_percent || 0)))
+
+  const countdown = useDeadlineCountdown(item.deadline, item.deadline_time)
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`group flex min-h-38.75 w-57.5 min-w-57.5 shrink-0 flex-col rounded-xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md cursor-pointer ${
+      className={`group flex min-h-38.75 w-57.5 min-w-57.5 shrink-0 flex-col rounded-xl border p-3.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md cursor-pointer ${
         isOverdue
           ? 'border-red-300 bg-red-50/40 hover:border-red-400'
           : item.status === 'DONE'
@@ -703,32 +830,97 @@ function WorkCard({
           : 'border-slate-200 bg-white hover:border-slate-300'
       }`}
     >
+      {/* PROJECT CONTEXT */}
+      <div className="flex items-center justify-between gap-1.5 mb-1 text-[10px]">
+        <span className="font-extrabold uppercase tracking-wider text-[#801424] truncate">
+          {item.projects?.project_key || item.projects?.name || 'General'}
+        </span>
+        {item.project_modules?.name && (
+          <span className="truncate text-slate-400 font-medium max-w-[50%]">
+            {item.project_modules.name}
+          </span>
+        )}
+      </div>
+
       {/* TITLE */}
       <div className="flex items-start justify-between gap-2">
-        <p className="line-clamp-2 text-sm font-bold text-slate-900 group-hover:text-[#801424]">
+        <p className="line-clamp-2 text-xs font-bold text-slate-900 group-hover:text-[#801424]">
           {item.title}
         </p>
 
         {isOverdue && (
-          <span className="shrink-0 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[9px] font-extrabold uppercase text-red-700">
+          <span className="shrink-0 rounded-full border border-red-200 bg-red-50 px-1.5 py-0.5 text-[9px] font-extrabold uppercase text-red-700">
             Overdue
           </span>
         )}
       </div>
 
+      {/* QUANTITY TARGET & PACING BADGE */}
+      {hasQuantityTarget && (
+        <div className="mt-2 flex flex-col gap-1 text-[10px] bg-white/90 rounded-md p-1.5 border border-slate-200/80 shadow-2xs">
+          <div className="flex items-center justify-between font-bold text-slate-800">
+            <span>
+              {item.completed_quantity || 0} / {item.target_quantity} {item.quantity_unit || 'items'} Completed
+            </span>
+            {item.pacing?.status && (
+              <span
+                className={`px-1.5 py-0.2 rounded text-[8px] font-black uppercase ${
+                  item.pacing.status === 'OVERDUE'
+                    ? 'bg-red-600 text-white'
+                    : item.pacing.status === 'BEHIND'
+                    ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                    : item.pacing.status === 'AT_RISK'
+                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                    : item.pacing.status === 'AHEAD'
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                    : 'bg-teal-100 text-teal-800 border border-teal-200'
+                }`}
+              >
+                {item.pacing.status}
+              </span>
+            )}
+          </div>
+
+          {/* Daily Schedule & Backlog Caution info */}
+          {item.pacing?.enabled && (
+            <div className="flex items-center justify-between text-[9px] text-slate-500 pt-0.5 border-t border-slate-100 font-medium">
+              <span>
+                Expected: {item.pacing.expectedQuantity} {item.quantity_unit || 'items'}
+              </span>
+              {item.pacing.backlog && item.pacing.backlog > 0 ? (
+                <span className="font-extrabold text-rose-600">
+                  ⚠ Backlog: {item.pacing.backlog}
+                </span>
+              ) : (
+                <span className="text-emerald-700 font-bold">
+                  On Target
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Workload increase / Required pace warning */}
+          {item.pacing?.enabled && item.pacing.workloadIncreased && (
+            <div className="text-[8.5px] font-bold text-amber-700 bg-amber-50/80 rounded px-1 py-0.5 border border-amber-200/60">
+              ⚡ Pace: {Math.ceil(item.pacing.requiredPerDay)} {item.quantity_unit || 'items'}/day (Pace Increased)
+            </div>
+          )}
+        </div>
+      )}
+
       {/* PROGRESS */}
-      <div className="mt-4">
-        <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+      <div className="mt-2">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">
             Progress
           </span>
 
-          <span className="text-sm font-extrabold text-slate-900">
+          <span className="text-xs font-extrabold text-slate-900">
             {progress}%
           </span>
         </div>
 
-        <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+        <div className="relative h-1.5 overflow-hidden rounded-full bg-slate-100">
           <div
             className={`h-full rounded-full transition-all ${
               item.status === 'DONE'
@@ -742,10 +934,10 @@ function WorkCard({
         </div>
       </div>
 
-      {/* STATUS */}
-      <div className="mt-4 flex items-center justify-between gap-2">
+      {/* STATUS & PRIORITY */}
+      <div className="mt-2.5 flex items-center justify-between gap-2">
         <span
-          className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${getWorkStatusClass(
+          className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${getWorkStatusClass(
             item.status,
           )}`}
         >
@@ -753,22 +945,37 @@ function WorkCard({
         </span>
 
         {item.priority && (
-          <span className="text-[10px] font-semibold text-slate-400">
+          <span className="text-[9px] font-semibold text-slate-400">
             {item.priority}
           </span>
         )}
       </div>
 
-      {/* DEADLINE */}
-      <div className="mt-auto pt-3">
-        <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
-          <Clock3 size={11} />
-
-          <span>
-            {item.deadline
-              ? `Due ${item.deadline}`
-              : 'No deadline'}
-          </span>
+      {/* LIVE DEADLINE COUNTDOWN */}
+      <div className="mt-auto pt-2.5">
+        <div className="flex items-center gap-1 text-[10px]">
+          <Clock3 size={10} className="shrink-0 text-slate-400" />
+          {countdown.hasDeadline ? (
+            <span
+              className={`truncate font-semibold ${
+                countdown.isOverdue
+                  ? 'text-red-600 font-bold'
+                  : countdown.totalSeconds <= 60 * 60
+                  ? 'text-red-600 font-bold'
+                  : countdown.totalSeconds <= 6 * 60 * 60
+                  ? 'text-amber-600 font-bold'
+                  : 'text-slate-500'
+              }`}
+            >
+              {countdown.isOverdue
+                ? `Overdue by ${countdown.days}d ${countdown.hours}h`
+                : countdown.days > 0
+                ? `Due in ${countdown.days}d ${countdown.hours}h`
+                : `${countdown.hours}h ${countdown.minutes}m left`}
+            </span>
+          ) : (
+            <span className="text-slate-400">No deadline</span>
+          )}
         </div>
       </div>
     </button>
@@ -785,6 +992,7 @@ function UnifiedAssignWorkDrawer({
   workTypes,
   dailyTargets,
   capacities,
+  employeeCapacity,
   onClose,
   onAssigned,
 }: {
@@ -796,10 +1004,19 @@ function UnifiedAssignWorkDrawer({
   workTypes: WorkType[]
   dailyTargets: DailyTarget[]
   capacities: Record<string, { utilizationPercent: number; isOverloaded: boolean }>
+  employeeCapacity: EmployeeCapacity[]
   onClose: () => void
   onAssigned: (summaryTitle?: string) => Promise<void>
 }) {
   const { accessToken } = useAuth()
+
+  function getEmployeeCapacityInfo(employeeId: string) {
+    return (
+      employeeCapacity.find(
+        (item) => item.employee.id === employeeId,
+      ) || null
+    )
+  }
   const [assignmentCategory, setAssignmentCategory] = useState<'INDIVIDUAL' | 'RECURRING'>('INDIVIDUAL')
   const [sourceMode, setSourceMode] = useState<'NEW' | 'EXISTING'>(
     initialSourceMode,
@@ -823,6 +1040,9 @@ function UnifiedAssignWorkDrawer({
   const [sprintId, setSprintId] = useState('')
   const [workTypeId, setWorkTypeId] = useState(workTypes[0]?.id || '')
   const [priority, setPriority] = useState<WorkItem['priority']>('MEDIUM')
+  const [startDate, setStartDate] = useState(
+    new Date().toISOString().slice(0, 10),
+  )
   const [deadlineDate, setDeadlineDate] = useState(
     new Date().toISOString().slice(0, 10),
   )
@@ -843,6 +1063,12 @@ function UnifiedAssignWorkDrawer({
   const [targetValue, setTargetValue] = useState<number | string>(1)
   const [targetUnit, setTargetUnit] = useState('tasks')
   const [targetDeadlineTime, setTargetDeadlineTime] = useState('17:00')
+
+  // Step 19 — Pacing & Target Quantity Fields
+  const [pacingEnabled, setPacingEnabled] = useState(false)
+  const [targetQuantity, setTargetQuantity] = useState<string>('')
+  const [completedQuantity, setCompletedQuantity] = useState<string>('0')
+  const [quantityUnit, setQuantityUnit] = useState<string>('')
 
   // Existing Work Mode state
   const [existingWorkSearch, setExistingWorkSearch] = useState('')
@@ -946,6 +1172,7 @@ function UnifiedAssignWorkDrawer({
           sprint_id: sprintId || undefined,
           work_type_id: workTypeId || undefined,
           priority,
+          start_date: startDate || undefined,
           deadline_date: deadlineDate || undefined,
           deadline: deadlineDate || undefined,
           deadline_time: deadlineTime || undefined,
@@ -956,6 +1183,12 @@ function UnifiedAssignWorkDrawer({
           target_value: Number(targetValue) || 1,
           unit: targetUnit.trim() || 'tasks',
           target_deadline_time: targetDeadlineTime || '17:00',
+
+          target_quantity: pacingEnabled ? (Number(targetQuantity) || Number(targetValue) || null) : null,
+          completed_quantity: pacingEnabled ? (Number(completedQuantity) || 0) : 0,
+          quantity_unit: pacingEnabled ? (quantityUnit.trim() || targetUnit.trim() || null) : null,
+          pacing_start_date: startDate || undefined,
+          pacing_enabled: pacingEnabled,
         })
 
         await onAssigned(`✓ Created and assigned "${title.trim()}" to ${fullName(selectedEmployee!)}`)
@@ -1187,7 +1420,10 @@ function UnifiedAssignWorkDrawer({
               type="number"
               min="0"
               value={targetValue}
-              onChange={(e) => setTargetValue(e.target.value)}
+              onChange={(e) => {
+                setTargetValue(e.target.value)
+                if (pacingEnabled) setTargetQuantity(e.target.value)
+              }}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-black outline-none focus:border-[#801424]"
             />
           </div>
@@ -1198,11 +1434,104 @@ function UnifiedAssignWorkDrawer({
             </label>
             <input
               value={targetUnit}
-              onChange={(e) => setTargetUnit(e.target.value)}
+              onChange={(e) => {
+                setTargetUnit(e.target.value)
+                if (pacingEnabled) setQuantityUnit(e.target.value)
+              }}
               placeholder="Videos"
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold outline-none focus:border-[#801424]"
             />
           </div>
+        </div>
+
+        {/* Step 19 — Track quantity target checkbox & configuration */}
+        <div className="pt-2 border-t border-slate-200">
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={pacingEnabled}
+              onChange={(e) => {
+                const checked = e.target.checked
+                setPacingEnabled(checked)
+                if (checked) {
+                  if (!targetQuantity && targetValue) setTargetQuantity(String(targetValue))
+                  if (!quantityUnit && targetUnit) setQuantityUnit(targetUnit)
+                }
+              }}
+              className="accent-[#801424] h-4 w-4 rounded"
+            />
+            <span className="text-xs font-bold text-slate-800">
+              Track quantity target & automatic deadline pacing (e.g. 15 videos / month)
+            </span>
+          </label>
+
+          {pacingEnabled && (
+            <div className="mt-3 space-y-3 rounded-xl bg-white border border-slate-200 p-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Target Quantity
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={targetQuantity}
+                    onChange={(e) => {
+                      setTargetQuantity(e.target.value)
+                      setTargetValue(e.target.value)
+                    }}
+                    placeholder="e.g. 15"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold outline-none focus:border-[#801424]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Quantity Unit
+                  </label>
+                  <input
+                    value={quantityUnit}
+                    onChange={(e) => {
+                      setQuantityUnit(e.target.value)
+                      setTargetUnit(e.target.value)
+                    }}
+                    placeholder="e.g. Videos"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold outline-none focus:border-[#801424]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Completed So Far
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={completedQuantity}
+                    onChange={(e) => setCompletedQuantity(e.target.value)}
+                    placeholder="0"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold outline-none focus:border-[#801424]"
+                  />
+                </div>
+
+                <div className="flex flex-col justify-end">
+                  <div className="rounded-xl bg-rose-50/50 border border-rose-100 px-3 py-2 text-[11px] font-semibold text-slate-700">
+                    {(() => {
+                      const qty = Number(targetQuantity || targetValue || 0)
+                      if (qty <= 0 || !deadlineDate || !startDate) return 'Enter dates and quantity for pace'
+                      const start = new Date(startDate)
+                      const end = new Date(deadlineDate)
+                      const days = Math.max(1, Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1)
+                      const interval = (days / qty).toFixed(1)
+                      return `Pace: 1 ${quantityUnit || targetUnit || 'unit'} every ${interval} days (${days} days total)`
+                    })()}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="rounded-xl bg-white border border-slate-200 p-3">
@@ -1212,6 +1541,7 @@ function UnifiedAssignWorkDrawer({
             </span>
             <span className="text-sm font-black text-slate-900">
               {targetValue || 0} {targetUnit || 'items'}
+              {pacingEnabled && ' (Paced)'}
             </span>
           </div>
         </div>
@@ -1237,21 +1567,80 @@ function UnifiedAssignWorkDrawer({
             ))}
           </select>
 
-          {selectedEmployeeId && (
-            <div className="mt-3 rounded-xl bg-slate-50 border border-slate-200 p-3">
-              <p className="text-[10px] font-bold uppercase text-slate-400">
-                Current workload
-              </p>
-              <p className="mt-1 text-sm font-black text-slate-900">
-                {capacities[selectedEmployeeId]?.utilizationPercent || 0}% utilized
-              </p>
-              {capacities[selectedEmployeeId]?.isOverloaded && (
-                <p className="mt-1 text-[11px] font-bold text-rose-600">
-                  ⚠ This assignment may overload this person.
-                </p>
-              )}
-            </div>
-          )}
+          {selectedEmployeeId &&
+            (() => {
+              const capacity = getEmployeeCapacityInfo(selectedEmployeeId)
+
+              if (!capacity) {
+                return capacities[selectedEmployeeId] ? (
+                  <div className="mt-3 rounded-xl bg-slate-50 border border-slate-200 p-3">
+                    <p className="text-[10px] font-bold uppercase text-slate-400">
+                      Current workload
+                    </p>
+                    <p className="mt-1 text-sm font-black text-slate-900">
+                      {capacities[selectedEmployeeId]?.utilizationPercent || 0}% utilized
+                    </p>
+                    {capacities[selectedEmployeeId]?.isOverloaded && (
+                      <p className="mt-1 text-[11px] font-bold text-rose-600">
+                        ⚠ This assignment may overload this person.
+                      </p>
+                    )}
+                  </div>
+                ) : null
+              }
+
+              const isOverloaded = capacity.workloadStatus === 'OVERLOADED'
+              const isHigh = capacity.workloadStatus === 'HIGH'
+
+              if (!isOverloaded && !isHigh) {
+                return (
+                  <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs">
+                    <p className="font-bold text-emerald-800">
+                      Employee workload is manageable
+                    </p>
+                    <p className="mt-1 text-emerald-700">
+                      {capacity.assignedWork} active tasks ·{' '}
+                      {capacity.activeProjectCount} active projects ·{' '}
+                      {capacity.utilizationPercent}% capacity
+                    </p>
+                  </div>
+                )
+              }
+
+              return (
+                <div
+                  className={
+                    isOverloaded
+                      ? 'mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs'
+                      : 'mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs'
+                  }
+                >
+                  <p
+                    className={
+                      isOverloaded
+                        ? 'font-bold text-red-800'
+                        : 'font-bold text-amber-800'
+                    }
+                  >
+                    {isOverloaded
+                      ? 'Employee is currently overloaded'
+                      : 'Employee has a high workload'}
+                  </p>
+                  <p
+                    className={
+                      isOverloaded
+                        ? 'mt-1 text-red-700'
+                        : 'mt-1 text-amber-700'
+                    }
+                  >
+                    {capacity.assignedWork} active tasks ·{' '}
+                    {capacity.activeProjectCount} projects ·{' '}
+                    {capacity.utilizationPercent}% capacity ·{' '}
+                    {capacity.overdueCount} overdue
+                  </p>
+                </div>
+              )
+            })()}
         </div>
       ) : (
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -1364,17 +1753,31 @@ function UnifiedAssignWorkDrawer({
             </div>
           </>
         ) : (
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                Deadline Date
-              </label>
-              <input
-                type="date"
-                value={deadlineDate}
-                onChange={(e) => setDeadlineDate(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs outline-none focus:border-[#801424]"
-              />
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Start Date
+                </label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs outline-none focus:border-[#801424]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Deadline Date
+                </label>
+                <input
+                  type="date"
+                  value={deadlineDate}
+                  onChange={(e) => setDeadlineDate(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs outline-none focus:border-[#801424]"
+                />
+              </div>
             </div>
 
             <div>

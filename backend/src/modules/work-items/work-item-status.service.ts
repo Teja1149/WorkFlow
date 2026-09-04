@@ -46,7 +46,10 @@ export async function transitionWorkItemStatus(
       project_id,
       deadline,
       deadline_time,
-      completed_at
+      completed_at,
+      target_quantity,
+      completed_quantity,
+      quantity_unit
     `)
     .eq('id', workItemId)
     .eq('organization_id', organizationId)
@@ -78,6 +81,32 @@ export async function transitionWorkItemStatus(
 
   if (isSendBack && !notes?.trim()) {
     throw new Error('A reason is required when sending work back.')
+  }
+
+  // Prevent completion if target quantity has not been reached, unless authorized override
+  if (nextStatus === 'DONE') {
+    const targetQty = Number(work.target_quantity || 0)
+    const completedQty = Number(work.completed_quantity || 0)
+
+    if (targetQty > 0 && completedQty < targetQty) {
+      const isOverride =
+        (action as any) === 'OVERRIDE_COMPLETE' ||
+        (notes && notes.toLowerCase().includes('override'))
+
+      if (!isOverride) {
+        throw new Error(
+          `Cannot mark work as complete: target quantity not reached (${completedQty} / ${targetQty} ${work.quantity_unit || 'items'}). Work must remain IN_PROGRESS until all units are completed.`,
+        )
+      }
+    }
+  }
+
+  // A blocker must always be documented so the employee, manager and admin
+  // have a clear, auditable reason for why the work cannot continue.
+  if (nextStatus === 'BLOCKED' && !notes?.trim()) {
+    throw new Error(
+      'Please provide blocker details before marking work as blocked.',
+    )
   }
 
   if (!isSendBack) {

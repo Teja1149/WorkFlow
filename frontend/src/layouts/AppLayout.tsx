@@ -117,20 +117,20 @@ function getNavGroups(role?: AppRole) {
         title: 'OPERATIONS',
         items: [
           { name: 'Work Overview', path: '/work-overview', icon: Activity },
-          { name: 'Projects', path: '/projects', icon: FolderKanban },
+          { name: 'Company Workboard', path: '/admin-workboard', icon: LayoutDashboard },
           { name: 'Work Planner', path: '/work-distribution', icon: UserCheck },
           { name: 'Employees', path: '/employees', icon: Users },
+          { name: 'Projects', path: '/projects', icon: FolderKanban },
           { name: 'Work Types', path: '/work-types', icon: Layers3 },
         ],
       },
       {
         title: 'EXECUTION',
         items: [
-          { name: 'Team Execution', path: '/admin-workboard', icon: LayoutDashboard },
-          { name: 'Work Distribution', path: '/work-distribution', icon: UserCheck },
-          { name: 'My Workload', path: '/my-workload', icon: Gauge },
-          { name: 'Team Today', path: '/team-today', icon: Users, hasBadge: true },
           { name: 'Daily Execution Board', path: '/execution-board', icon: LayoutDashboard },
+          { name: 'Team Today', path: '/team-today', icon: Users, hasBadge: true },
+          { name: 'My Day', path: '/my-day', icon: CalendarDays, hasBadge: true },
+          { name: 'My Workload', path: '/my-workload', icon: Gauge },
         ],
       },
       {
@@ -144,8 +144,16 @@ function getNavGroups(role?: AppRole) {
       {
         title: 'REPORTS',
         items: [
+          { name: 'Reports', path: '/reports', icon: CalendarDays },
           { name: 'Daily Results', path: '/daily-results', icon: CalendarDays },
+          { name: 'Target Analytics', path: '/company-analytics', icon: Target },
           { name: 'Team Performance', path: '/employee-performance', icon: Award },
+        ],
+      },
+      {
+        title: 'NOTIFICATIONS',
+        items: [
+          { name: 'Notifications', path: '/notifications', icon: Bell, hasBadge: true },
         ],
       },
     ]

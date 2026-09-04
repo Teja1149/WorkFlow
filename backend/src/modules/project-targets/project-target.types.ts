@@ -29,6 +29,7 @@ export interface CreateProjectTargetInput {
   deadline_time?: string | null
 
   work_type_id?: string | null
+  tracking_mode?: 'COMBINED' | 'SEPARATE'
   schedule_mode?: string
   description?: string | null
 
@@ -60,6 +61,8 @@ export interface UpdateProjectTargetInput {
   status?: string
   health?: 'GREEN' | 'AMBER' | 'RED'
   work_type_id?: string | null
+
+  tracking_mode?: 'COMBINED' | 'SEPARATE'
 
   allocations?: Array<{
     employee_id: string

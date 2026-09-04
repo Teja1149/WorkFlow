@@ -908,6 +908,11 @@ function WorkItemCard({
               {item.work_types.name}
             </span>
           )}
+          {item.target_quantity && Number(item.target_quantity) > 0 && (
+            <span className="rounded-md bg-rose-50 border border-rose-200 px-1.5 py-0.5 font-bold text-[#801424]">
+              {item.completed_quantity || 0} / {item.target_quantity} {item.quantity_unit || 'items'}
+            </span>
+          )}
         </div>
 
         {item.estimated_hours && (

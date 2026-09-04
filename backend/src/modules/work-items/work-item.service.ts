@@ -9,6 +9,16 @@ import {
 } from '../notifications/notification.service.js'
 import { NotificationType } from '../notifications/notification.types.js'
 import { transitionWorkItemStatus } from './work-item-status.service.js'
+import {
+  calculateWorkItemPacing,
+  getPacingHealth,
+  calculateQuantityProgress,
+} from './work-item-pacing.service.js'
+import {
+  createDeadlineDateTime,
+  getDeadlineState,
+} from './work-deadline.utils.js'
+import { calculateWorkHealth } from './work-health.service.js'
 
 export type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
 
@@ -96,6 +106,7 @@ export async function getWorkItems(
     // Manager sees:
     // 1. their own assigned work
     // 2. work assigned to employees
+    // 3. unassigned work in the organization (for backlog / distribution)
     const visibleIds = [...new Set([
       userId,
       ...employeeIds,
@@ -107,11 +118,11 @@ export async function getWorkItems(
       } else {
         query = query.eq('assigned_to', userId)
       }
-    } else {
+    } else if (!filters?.project_id) {
       if (visibleIds.length > 0) {
-        query = query.in('assigned_to', visibleIds)
+        query = query.or(`assigned_to.in.(${visibleIds.join(',')}),assigned_to.is.null`)
       } else {
-        query = query.eq('assigned_to', userId)
+        query = query.or(`assigned_to.eq.${userId},assigned_to.is.null`)
       }
     }
   } else {
@@ -135,7 +146,16 @@ export async function getWorkItems(
     throw new Error(error.message)
   }
 
-  return data
+  return (data || []).map((item) => {
+    const pacing = calculateWorkItemPacing(item)
+    const pacingHealth = getPacingHealth(pacing.status)
+
+    return {
+      ...item,
+      pacing,
+      health: pacingHealth || item.health || null,
+    }
+  })
 }
 
 export async function getWorkItemById(
@@ -229,7 +249,14 @@ export async function getWorkItemById(
     throw new Error('Work item not found.')
   }
 
-  return data
+  const pacing = calculateWorkItemPacing(data)
+  const pacingHealth = getPacingHealth(pacing.status)
+
+  return {
+    ...data,
+    pacing,
+    health: pacingHealth || data.health || null,
+  }
 }
 
 export async function createWorkItem(
@@ -242,12 +269,24 @@ export async function createWorkItem(
     module_id?: string | null
     milestone_id?: string | null
     assigned_to?: string | null
+
+    // Project Target → Workboard linking
+    project_target_id?: string | null
+    target_unit_index?: number | null
+
     title: string
     description?: string
     priority?: Priority
     start_date?: string | null
     deadline?: string | null
     deadline_time?: string | null
+
+    target_quantity?: number | null
+    completed_quantity?: number | null
+    quantity_unit?: string | null
+    pacing_start_date?: string | null
+    pacing_enabled?: boolean
+
     estimated_hours?: number | null
     actual_hours?: number | null
     story_points?: number | null
@@ -359,6 +398,11 @@ export async function createWorkItem(
     .insert({
       organization_id: organizationId,
       project_id: input.project_id,
+
+      // Source tracking
+      project_target_id: input.project_target_id || null,
+      target_unit_index: input.target_unit_index ?? null,
+
       work_type_id: input.work_type_id || null,
       module_id: input.module_id || null,
       milestone_id: input.milestone_id || null,
@@ -372,6 +416,25 @@ export async function createWorkItem(
       deadline: input.deadline || null,
       deadline_time: input.deadline_time || null,
       original_deadline: input.deadline || null,
+
+      health: calculateWorkHealth({
+        status: 'TODO',
+        deadlineState: getDeadlineState(
+          createDeadlineDateTime(input.deadline, input.deadline_time),
+        ),
+        pacingStatus: 'ON_TRACK',
+        priority: input.priority,
+      }),
+
+      target_quantity: input.target_quantity ?? (input as any).target_value ?? null,
+      completed_quantity: input.completed_quantity ?? (input as any).completed_value ?? 0,
+      quantity_unit: (input.quantity_unit ?? (input as any).unit)?.trim() || null,
+      pacing_start_date: input.pacing_start_date || input.start_date || null,
+      pacing_enabled: Boolean(
+        (input.pacing_enabled ?? true) &&
+        Number(input.target_quantity ?? (input as any).target_value ?? 0) > 0,
+      ),
+
       estimated_hours: input.estimated_hours ?? 0,
       actual_hours: input.actual_hours ?? 0,
       story_points: input.story_points ?? null,
@@ -442,6 +505,12 @@ export async function updateWorkItem(
     actual_hours?: number | null
     progress_percent?: number
     assignment_reason?: string
+
+    target_quantity?: number | null
+    completed_quantity?: number | null
+    quantity_unit?: string | null
+    pacing_start_date?: string | null
+    pacing_enabled?: boolean
   },
 ) {
   const { data: existing, error: existingError } = await supabaseAdmin
@@ -451,11 +520,19 @@ export async function updateWorkItem(
       organization_id,
       assigned_to,
       status,
+      priority,
+      deadline,
+      deadline_time,
       progress_percent,
       title,
       project_id,
       created_by,
-      start_date
+      start_date,
+      target_quantity,
+      completed_quantity,
+      quantity_unit,
+      pacing_start_date,
+      pacing_enabled
     `)
     .eq('id', workItemId)
     .single()
@@ -479,13 +556,22 @@ export async function updateWorkItem(
   const nextStatus = input.status
 
   if (nextStatus && nextStatus !== existing.status) {
-    await transitionWorkItemStatus(
-      organizationId,
-      userId,
-      role,
-      workItemId,
-      nextStatus as any,
-    )
+    const rawCompletedCheck = input.completed_quantity !== undefined ? input.completed_quantity : (input as any).completed_value
+    const effectiveCompletedCheck = rawCompletedCheck !== undefined ? Number(rawCompletedCheck) : Number(existing.completed_quantity || 0)
+    const rawTargetCheck = input.target_quantity !== undefined ? input.target_quantity : (input as any).target_value
+    const effectiveTargetCheck = rawTargetCheck !== undefined ? Number(rawTargetCheck || 0) : Number(existing.target_quantity || 0)
+
+    if (nextStatus === 'DONE' && effectiveTargetCheck > 0 && effectiveCompletedCheck < effectiveTargetCheck) {
+      // Server-side enforcement: Work must remain IN_PROGRESS when completed < target
+    } else {
+      await transitionWorkItemStatus(
+        organizationId,
+        userId,
+        role,
+        workItemId,
+        nextStatus as any,
+      )
+    }
   }
 
   if (role === 'EMPLOYEE') {
@@ -599,6 +685,76 @@ export async function updateWorkItem(
   if (input.estimated_hours !== undefined) updateData.estimated_hours = input.estimated_hours
   if (input.actual_hours !== undefined) updateData.actual_hours = input.actual_hours
   if (input.progress_percent !== undefined) updateData.progress_percent = input.progress_percent
+
+  const rawTarget = input.target_quantity !== undefined ? input.target_quantity : (input as any).target_value
+  const rawCompleted = input.completed_quantity !== undefined ? input.completed_quantity : (input as any).completed_value
+  const rawUnit = input.quantity_unit !== undefined ? input.quantity_unit : (input as any).unit
+
+  if (rawTarget !== undefined) updateData.target_quantity = rawTarget
+  if (rawCompleted !== undefined) updateData.completed_quantity = rawCompleted
+  if (rawUnit !== undefined) updateData.quantity_unit = rawUnit?.trim() || null
+  if (input.pacing_start_date !== undefined) updateData.pacing_start_date = input.pacing_start_date || null
+  if (input.pacing_enabled !== undefined) updateData.pacing_enabled = Boolean(input.pacing_enabled)
+
+  // Automatically calculate progress percent and status when quantity fields are present
+  const effectiveTarget = rawTarget !== undefined ? Number(rawTarget || 0) : Number(existing.target_quantity || 0)
+  const effectiveCompleted = rawCompleted !== undefined ? Number(rawCompleted) : Number(existing.completed_quantity || 0)
+
+  if (effectiveTarget > 0) {
+    if (rawCompleted !== undefined) {
+      updateData.progress_percent = calculateQuantityProgress(
+        effectiveCompleted,
+        effectiveTarget,
+      )
+    }
+
+    // A quantity-based work item remains in progress until completed >= target,
+    // after which it automatically becomes completed.
+    if (effectiveCompleted >= effectiveTarget) {
+      updateData.status = 'DONE'
+      updateData.progress_percent = 100
+      updateData.completed_at = new Date().toISOString()
+    } else {
+      // Completed < Target: work must remain IN_PROGRESS even if input attempted to mark it DONE
+      if (input.status === 'DONE' || existing.status === 'DONE') {
+        updateData.status = 'IN_PROGRESS'
+        updateData.completed_at = null
+      } else if (input.status !== undefined) {
+        updateData.status = input.status
+      } else if (existing.status === 'TODO' && effectiveCompleted > 0) {
+        updateData.status = 'IN_PROGRESS'
+      }
+    }
+  }
+
+  // Recalculate health immediately after relevant changes
+  const effectiveDeadline = input.deadline !== undefined ? input.deadline : existing.deadline
+  const effectiveDeadlineTime = input.deadline_time !== undefined ? input.deadline_time : existing.deadline_time
+  const effectiveStatus = updateData.status !== undefined ? updateData.status : (input.status !== undefined ? input.status : existing.status)
+  const effectivePriority = input.priority !== undefined ? input.priority : existing.priority
+  const effectivePacingStart = input.pacing_start_date !== undefined ? input.pacing_start_date : existing.pacing_start_date
+  const effectivePacingEnabled = input.pacing_enabled !== undefined ? input.pacing_enabled : existing.pacing_enabled
+
+  const effectivePacing = calculateWorkItemPacing({
+    status: effectiveStatus,
+    target_quantity: effectiveTarget,
+    completed_quantity: effectiveCompleted,
+    pacing_start_date: effectivePacingStart,
+    deadline: effectiveDeadline,
+    deadline_time: effectiveDeadlineTime,
+    pacing_enabled: effectivePacingEnabled,
+  })
+
+  const effectiveDeadlineState = getDeadlineState(
+    createDeadlineDateTime(effectiveDeadline, effectiveDeadlineTime),
+  )
+
+  updateData.health = calculateWorkHealth({
+    status: effectiveStatus,
+    deadlineState: effectiveDeadlineState,
+    pacingStatus: effectivePacing.status,
+    priority: effectivePriority,
+  })
 
   const { data, error } = await supabaseAdmin
     .from('work_items')

@@ -89,9 +89,7 @@ export async function getProjects(
     `)
     .eq('organization_id', organizationId)
 
-  if (role === 'MANAGER') {
-    query = query.eq('project_manager_id', userId)
-  } else if (role === 'EMPLOYEE') {
+  if (role === 'EMPLOYEE') {
     const [memberRes, workRes, managerRes] = await Promise.all([
       supabaseAdmin
         .from('project_members')
@@ -148,11 +146,25 @@ export async function createProject(
     target_date?: string | null
   },
 ) {
-  if (input.project_manager_id) {
+  let projectManagerId = input.project_manager_id || null
+
+  if (!projectManagerId) {
+    const { data: creatorProfile } = await supabaseAdmin
+      .from('profiles')
+      .select('id, role')
+      .eq('id', createdBy)
+      .maybeSingle()
+
+    if (creatorProfile?.role === 'MANAGER') {
+      projectManagerId = createdBy
+    }
+  }
+
+  if (projectManagerId) {
     const { data: manager, error: managerError } = await supabaseAdmin
       .from('profiles')
       .select('id, role, organization_id')
-      .eq('id', input.project_manager_id)
+      .eq('id', projectManagerId)
       .single()
 
     if (

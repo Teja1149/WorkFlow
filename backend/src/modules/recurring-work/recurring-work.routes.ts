@@ -20,21 +20,21 @@ router.get(
 router.post(
   '/',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'ADMIN'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER'),
   createRecurringWork,
 )
 
 router.post(
   '/generate',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'ADMIN'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER'),
   generateRecurringWork,
 )
 
 router.patch(
   '/:id/archive',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'ADMIN'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER'),
   archiveRecurringWork,
 )
 

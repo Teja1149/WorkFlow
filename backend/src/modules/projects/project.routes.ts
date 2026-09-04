@@ -23,7 +23,7 @@ router.get(
 router.post(
   '/',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'ADMIN'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER'),
   addProject,
 )
 

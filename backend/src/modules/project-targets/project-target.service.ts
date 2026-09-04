@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon'
 import { supabaseAdmin } from '../../lib/supabase.js'
+import { createWorkItem } from '../work-items/work-item.service.js'
 import type {
   CreateProjectTargetInput,
   EmployeeAllocation,
@@ -135,7 +136,14 @@ async function computeTargetDetails(
     .eq('target_id', targetId)
     .order('order_index', { ascending: true })
 
-  // 3. Fetch daily work targets in this project to compute actuals from real daily output
+  // 3. Fetch linked work items for this target
+  const { data: linkedWorkItems } = await supabaseAdmin
+    .from('work_items')
+    .select('id, assigned_to, status, progress_percent, target_quantity, completed_quantity, quantity_target, quantity_completed')
+    .eq('organization_id', organizationId)
+    .eq('project_target_id', targetId)
+
+  // 4. Fetch daily work targets in this project to compute actuals from real daily output
   let query = supabaseAdmin
     .from('daily_work_targets')
     .select('id, employee_id, milestone_id, target_value, actual_value, status, deadline_date')
@@ -149,7 +157,7 @@ async function computeTargetDetails(
 
   const { data: dailyTargets } = await query
 
-  // 4. Calculate deadline, days remaining, required pace
+  // 5. Calculate deadline, days remaining, required pace
   const today = DateTime.now().startOf('day')
   const deadlineStr = targetRecord.deadline_date || targetRecord.period_end
   const deadline = deadlineStr
@@ -158,10 +166,24 @@ async function computeTargetDetails(
 
   const daysRemaining = Math.max(0, Math.ceil(deadline.diff(today, 'days').days))
 
-  // 5. Compute employee allocations metrics
+  // 6. Compute employee allocations metrics
   const allocations: EmployeeAllocation[] = (allocRows || []).map((alloc) => {
-    const empDaily = (dailyTargets || []).filter((dt) => dt.employee_id === alloc.employee_id)
-    const empActual = empDaily.reduce((sum, dt) => sum + Number(dt.actual_value || 0), 0)
+    const empWorkItems = (linkedWorkItems || []).filter((w) => w.assigned_to === alloc.employee_id)
+    let empActual = 0
+
+    if (empWorkItems.length > 0) {
+      empActual = empWorkItems.reduce((sum, w) => {
+        const cQty = Number(w.completed_quantity ?? w.quantity_completed ?? 0)
+        const tQty = Number(w.target_quantity ?? w.quantity_target ?? 1)
+        if (cQty > 0) return sum + cQty
+        if (w.status === 'DONE') return sum + tQty
+        return sum + Math.round((tQty * Number(w.progress_percent || 0)) / 100)
+      }, 0)
+    } else {
+      const empDaily = (dailyTargets || []).filter((dt) => dt.employee_id === alloc.employee_id)
+      empActual = empDaily.reduce((sum, dt) => sum + Number(dt.actual_value || 0), 0)
+    }
+
     const metrics = calculateProjectTargetMetrics(Number(alloc.allocated_value || 0), empActual)
     const empPace =
       daysRemaining > 0 ? Number((metrics.remaining / daysRemaining).toFixed(2)) : metrics.remaining
@@ -182,7 +204,7 @@ async function computeTargetDetails(
     }
   })
 
-  // 6. Compute milestones metrics
+  // 7. Compute milestones metrics
   const milestones: ProjectTargetMilestone[] = (milestoneRows || []).map((m) => {
     const mDaily = (dailyTargets || []).filter(
       (dt) => (m.milestone_id && dt.milestone_id === m.milestone_id) || dt.milestone_id === m.id,
@@ -216,11 +238,19 @@ async function computeTargetDetails(
     }
   })
 
-  // 7. Compute total actual output
-  // Daily Output -> Employee Actual -> Allocation Actual -> Project Target Actual -> Project Achievement
+  // 8. Compute total actual output
+  // Work Items / Daily Output -> Employee Actual -> Allocation Actual -> Project Target Actual -> Project Achievement
   let totalActual = 0
   if (allocations.length > 0) {
     totalActual = allocations.reduce((sum, a) => sum + (a.actual_value || 0), 0)
+  } else if (linkedWorkItems && linkedWorkItems.length > 0) {
+    totalActual = linkedWorkItems.reduce((sum, w) => {
+      const cQty = Number(w.completed_quantity ?? w.quantity_completed ?? 0)
+      const tQty = Number(w.target_quantity ?? w.quantity_target ?? 1)
+      if (cQty > 0) return sum + cQty
+      if (w.status === 'DONE') return sum + tQty
+      return sum + Math.round((tQty * Number(w.progress_percent || 0)) / 100)
+    }, 0)
   } else {
     totalActual = (dailyTargets || []).reduce((sum, dt) => sum + Number(dt.actual_value || 0), 0)
   }
@@ -241,10 +271,16 @@ async function computeTargetDetails(
     targetMetrics.remaining,
   )
 
+  const projectName =
+    targetRecord.projects?.name ||
+    (Array.isArray(targetRecord.projects) ? targetRecord.projects[0]?.name : undefined) ||
+    targetRecord.project_name ||
+    undefined
+
   return {
     id: targetRecord.id,
     project_id: targetRecord.project_id,
-    project_name: targetRecord.projects?.name || undefined,
+    project_name: projectName,
     name: targetRecord.name,
     description: targetRecord.description || null,
     target_type: targetRecord.target_type || 'COUNT',
@@ -273,6 +309,298 @@ async function computeTargetDetails(
     milestones,
     created_at: targetRecord.created_at,
     updated_at: targetRecord.updated_at,
+  }
+}
+
+type ProjectTargetWorkSyncInput = {
+  id: string
+  project_id: string
+  name: string
+  description?: string | null
+  unit?: string | null
+  work_type_id?: string | null
+  period_start?: string | null
+  period_end?: string | null
+  deadline_date?: string | null
+  deadline_time?: string | null
+  tracking_mode?: 'COMBINED' | 'SEPARATE' | string | null
+}
+
+type ProjectTargetAllocationInput = {
+  employee_id: string
+  allocated_value: number
+}
+
+function calculateDistributedDeadline(
+  startDate: string | null | undefined,
+  finalDeadline: string | null | undefined,
+  unitIndex: number,
+  totalUnits: number,
+) {
+  if (!finalDeadline) return null
+
+  if (!startDate || totalUnits <= 1) {
+    return finalDeadline
+  }
+
+  const start = new Date(`${startDate}T00:00:00`)
+  const end = new Date(`${finalDeadline}T00:00:00`)
+
+  if (
+    Number.isNaN(start.getTime()) ||
+    Number.isNaN(end.getTime()) ||
+    end.getTime() <= start.getTime()
+  ) {
+    return finalDeadline
+  }
+
+  const ratio = unitIndex / totalUnits
+
+  const due = new Date(
+    start.getTime() +
+      (end.getTime() - start.getTime()) * ratio,
+  )
+
+  return due.toISOString().slice(0, 10)
+}
+
+async function syncProjectTargetWorkItems(
+  organizationId: string,
+  userId: string,
+  target: ProjectTargetWorkSyncInput,
+  allocations: ProjectTargetAllocationInput[],
+) {
+  if (!allocations.length) return
+
+  const trackingMode =
+    target.tracking_mode === 'SEPARATE'
+      ? 'SEPARATE'
+      : 'COMBINED'
+
+  const { data: existingItems, error: existingError } =
+    await supabaseAdmin
+      .from('work_items')
+      .select(`
+        id,
+        assigned_to,
+        target_unit_index,
+        status,
+        progress_percent
+      `)
+      .eq('organization_id', organizationId)
+      .eq('project_target_id', target.id)
+
+  if (existingError) {
+    throw new Error(existingError.message)
+  }
+
+  const existingMap = new Map(
+    (existingItems || []).map((item) => [
+      `${item.assigned_to}:${item.target_unit_index}`,
+      item,
+    ]),
+  )
+
+  const expectedKeys = new Set<string>()
+
+  for (const allocation of allocations) {
+    const employeeId = allocation.employee_id
+
+    const quantity = Math.max(
+      1,
+      Math.floor(
+        Number(allocation.allocated_value || 0),
+      ),
+    )
+
+    if (trackingMode === 'COMBINED') {
+      const unitIndex = 0
+
+      const key = `${employeeId}:${unitIndex}`
+
+      expectedKeys.add(key)
+
+      const existing = existingMap.get(key)
+
+      const title =
+        quantity > 1
+          ? `${target.name} (${quantity})`
+          : target.name
+
+      const description =
+        target.description ||
+        `${quantity} ${target.unit || 'units'} assigned from project target.`
+
+      if (existing) {
+        // Update assignment metadata without touching
+        // employee progress or task status.
+        await supabaseAdmin
+          .from('work_items')
+          .update({
+            title,
+            description,
+            work_type_id:
+              target.work_type_id || null,
+            target_quantity: quantity,
+            quantity_target: quantity,
+            quantity_unit: target.unit || 'units',
+            pacing_enabled: true,
+            pacing_start_date: target.period_start || null,
+            start_date:
+              target.period_start || null,
+            deadline:
+              target.deadline_date ||
+              target.period_end ||
+              null,
+            deadline_time:
+              target.deadline_time || null,
+            updated_at:
+              new Date().toISOString(),
+          })
+          .eq('id', existing.id)
+      } else {
+        await createWorkItem(
+          organizationId,
+          userId,
+          undefined,
+          {
+            project_id: target.project_id,
+            project_target_id: target.id,
+            target_unit_index: unitIndex,
+            work_type_id:
+              target.work_type_id || null,
+            assigned_to: employeeId,
+            title,
+            description,
+            priority: 'MEDIUM',
+            target_quantity: quantity,
+            completed_quantity: 0,
+            quantity_unit: target.unit || 'units',
+            pacing_enabled: true,
+            pacing_start_date: target.period_start || null,
+            start_date:
+              target.period_start || null,
+            deadline:
+              target.deadline_date ||
+              target.period_end ||
+              null,
+            deadline_time:
+              target.deadline_time || null,
+          },
+        )
+      }
+
+      continue
+    }
+
+    // Separate individual cards
+    for (
+      let unitIndex = 1;
+      unitIndex <= quantity;
+      unitIndex += 1
+    ) {
+      const key = `${employeeId}:${unitIndex}`
+
+      expectedKeys.add(key)
+
+      const existing = existingMap.get(key)
+
+      const title =
+        `${target.name} ${String(unitIndex).padStart(2, '0')}`
+
+      const unitDeadline =
+        calculateDistributedDeadline(
+          target.period_start,
+          target.deadline_date ||
+            target.period_end ||
+            null,
+          unitIndex,
+          quantity,
+        )
+
+      const description =
+        target.description ||
+        `Individual unit ${unitIndex} of ${quantity} from project target.`
+
+      if (existing) {
+        await supabaseAdmin
+          .from('work_items')
+          .update({
+            title,
+            description,
+            work_type_id:
+              target.work_type_id || null,
+            target_quantity: 1,
+            quantity_target: 1,
+            quantity_unit: target.unit || 'unit',
+            pacing_enabled: true,
+            pacing_start_date: target.period_start || null,
+            start_date:
+              target.period_start || null,
+            deadline: unitDeadline,
+            deadline_time:
+              target.deadline_time || null,
+            updated_at:
+              new Date().toISOString(),
+          })
+          .eq('id', existing.id)
+      } else {
+        await createWorkItem(
+          organizationId,
+          userId,
+          undefined,
+          {
+            project_id: target.project_id,
+            project_target_id: target.id,
+            target_unit_index: unitIndex,
+            work_type_id:
+              target.work_type_id || null,
+            assigned_to: employeeId,
+            title,
+            description,
+            priority: 'MEDIUM',
+            target_quantity: 1,
+            completed_quantity: 0,
+            quantity_unit: target.unit || 'unit',
+            pacing_enabled: true,
+            pacing_start_date: target.period_start || null,
+            start_date:
+              target.period_start || null,
+            deadline: unitDeadline,
+            deadline_time:
+              target.deadline_time || null,
+          },
+        )
+      }
+    }
+  }
+
+  /*
+   * Remove only unused TODO cards.
+   *
+   * Started, blocked and completed work is retained because
+   * it represents real employee history.
+   */
+  const obsoleteItems =
+    (existingItems || []).filter((item) => {
+      const key =
+        `${item.assigned_to}:${item.target_unit_index}`
+
+      return (
+        !expectedKeys.has(key) &&
+        item.status === 'TODO' &&
+        Number(item.progress_percent || 0) === 0
+      )
+    })
+
+  if (obsoleteItems.length > 0) {
+    await supabaseAdmin
+      .from('work_items')
+      .delete()
+      .in(
+        'id',
+        obsoleteItems.map((item) => item.id),
+      )
   }
 }
 
@@ -311,6 +639,7 @@ export async function createProjectTarget(
       unit: input.unit?.trim() || 'units',
       target_value: Number(input.target_value) || 0,
       actual_value: 0,
+      completed_value: 0,
       period_type: input.period_type || 'MONTHLY',
       period_start: periodStart,
       period_end: periodEnd,
@@ -318,11 +647,15 @@ export async function createProjectTarget(
       deadline_time: input.deadline_time || null,
       schedule_mode: input.schedule_mode || 'MANUAL',
       work_type_id: input.work_type_id || null,
+      tracking_mode:
+        input.tracking_mode === 'SEPARATE'
+          ? 'SEPARATE'
+          : 'COMBINED',
       status: 'ACTIVE',
       health: 'GREEN',
       created_by: userId,
     })
-    .select('*, projects(name)')
+    .select('*, projects:project_id(name)')
     .single()
 
   if (tErr || !targetRecord) {
@@ -334,6 +667,7 @@ export async function createProjectTarget(
     const allocRows = input.allocations.map((a) => ({
       organization_id: organizationId,
       target_id: targetRecord.id,
+      project_target_id: targetRecord.id,
       employee_id: a.employee_id,
       allocated_value: Number(a.allocated_value) || 0,
       actual_value: 0,
@@ -346,6 +680,44 @@ export async function createProjectTarget(
     if (aErr) {
       console.error('Failed to create target allocations:', aErr)
     }
+
+    // Every employee allocation must have linked work item(s)
+    // that appear on the Company Workboard.
+    try {
+      await syncProjectTargetWorkItems(
+        organizationId,
+        userId,
+        {
+          id: targetRecord.id,
+          project_id: targetRecord.project_id,
+          name: targetRecord.name,
+          description:
+            targetRecord.description || null,
+          unit: targetRecord.unit || 'units',
+          work_type_id:
+            targetRecord.work_type_id || null,
+          period_start:
+            targetRecord.period_start || periodStart,
+          period_end:
+            targetRecord.period_end || periodEnd,
+          deadline_date:
+            targetRecord.deadline_date ||
+            deadlineDate,
+          deadline_time:
+            targetRecord.deadline_time || null,
+          tracking_mode:
+            targetRecord.tracking_mode ||
+            input.tracking_mode ||
+            'COMBINED',
+        },
+        input.allocations,
+      )
+    } catch (syncError) {
+      console.error(
+        'Failed to synchronize project target work items:',
+        syncError,
+      )
+    }
   }
 
   // Insert milestones if any
@@ -353,11 +725,13 @@ export async function createProjectTarget(
     const milestoneRows = input.milestones.map((m, index) => ({
       organization_id: organizationId,
       target_id: targetRecord.id,
+      project_target_id: targetRecord.id,
       milestone_id: m.milestone_id || null,
       name: m.name.trim(),
       target_value: Number(m.target_value) || 0,
       actual_value: 0,
       deadline: m.deadline || null,
+      deadline_date: m.deadline || null,
       status: 'PENDING',
       health: 'GREEN',
       order_index: index,
@@ -392,7 +766,7 @@ export async function getProjectTargetsByProject(
 ): Promise<ProjectTargetResponse[]> {
   const { data: targets, error } = await supabaseAdmin
     .from('project_targets')
-    .select('*, projects(name)')
+    .select('*, projects:project_id(name)')
     .eq('organization_id', organizationId)
     .eq('project_id', projectId)
     .order('created_at', { ascending: false })
@@ -474,7 +848,7 @@ export async function getProjectTargetById(
 ): Promise<ProjectTargetResponse | null> {
   const { data: targetRecord, error } = await supabaseAdmin
     .from('project_targets')
-    .select('*, projects(name)')
+    .select('*, projects:project_id(name)')
     .eq('id', targetId)
     .eq('organization_id', organizationId)
     .single()
@@ -494,6 +868,7 @@ export async function updateProjectTarget(
   organizationId: string,
   targetId: string,
   input: UpdateProjectTargetInput,
+  userId: string,
 ): Promise<ProjectTargetResponse> {
   const updatePayload: Record<string, any> = {
     updated_at: new Date().toISOString(),
@@ -512,13 +887,19 @@ export async function updateProjectTarget(
   if (input.schedule_mode !== undefined) updatePayload.schedule_mode = input.schedule_mode
   if (input.status !== undefined) updatePayload.status = input.status
   if (input.work_type_id !== undefined) updatePayload.work_type_id = input.work_type_id
+  if (input.tracking_mode !== undefined) {
+    updatePayload.tracking_mode =
+      input.tracking_mode === 'SEPARATE'
+        ? 'SEPARATE'
+        : 'COMBINED'
+  }
 
   const { data: updatedRecord, error: uErr } = await supabaseAdmin
     .from('project_targets')
     .update(updatePayload)
     .eq('id', targetId)
     .eq('organization_id', organizationId)
-    .select('*, projects(name)')
+    .select('*, projects:project_id(name)')
     .single()
 
   if (uErr || !updatedRecord) {
@@ -536,11 +917,49 @@ export async function updateProjectTarget(
       const allocRows = input.allocations.map((a) => ({
         organization_id: organizationId,
         target_id: targetId,
+        project_target_id: targetId,
         employee_id: a.employee_id,
         allocated_value: Number(a.allocated_value) || 0,
         actual_value: 0,
       }))
       await supabaseAdmin.from('project_target_allocations').insert(allocRows)
+    }
+
+    // Synchronize Project Target allocations with the
+    // central Company Workboard work_items.
+    try {
+      await syncProjectTargetWorkItems(
+        organizationId,
+        userId,
+        {
+          id: updatedRecord.id,
+          project_id: updatedRecord.project_id,
+          name: updatedRecord.name,
+          description:
+            updatedRecord.description || null,
+          unit:
+            updatedRecord.unit || 'units',
+          work_type_id:
+            updatedRecord.work_type_id || null,
+          period_start:
+            updatedRecord.period_start || null,
+          period_end:
+            updatedRecord.period_end || null,
+          deadline_date:
+            updatedRecord.deadline_date || null,
+          deadline_time:
+            updatedRecord.deadline_time || null,
+          tracking_mode:
+            updatedRecord.tracking_mode ||
+            'COMBINED',
+        },
+        input.allocations,
+      )
+    } catch (syncError) {
+      console.error(
+        'Failed to synchronize updated project target work items:',
+        syncError,
+      )
     }
   }
 
@@ -555,11 +974,13 @@ export async function updateProjectTarget(
       const milestoneRows = input.milestones.map((m, index) => ({
         organization_id: organizationId,
         target_id: targetId,
+        project_target_id: targetId,
         milestone_id: m.milestone_id || null,
         name: m.name.trim(),
         target_value: Number(m.target_value) || 0,
         actual_value: 0,
         deadline: m.deadline || null,
+        deadline_date: m.deadline || null,
         status: m.status || 'PENDING',
         health: m.health || 'GREEN',
         order_index: index,
@@ -602,7 +1023,7 @@ export async function getProjectTargetSummary(
   // Check project_targets table first
   const { data: targetRecord } = await supabaseAdmin
     .from('project_targets')
-    .select('*, projects(name)')
+    .select('*, projects:project_id(name)')
     .eq('organization_id', organizationId)
     .eq('project_id', projectId)
     .order('created_at', { ascending: false })
@@ -839,6 +1260,7 @@ export async function setProjectTarget(
         target_type: input.target_type || 'COUNT',
         target_value: Number(input.target_value) || 0,
         actual_value: 0,
+        completed_value: 0,
         unit: input.unit?.trim() || 'units',
         period_type: periodType,
         period_start: periodStart,
@@ -867,6 +1289,7 @@ export async function setProjectTarget(
     const allocRows = input.allocations.map((a) => ({
       organization_id: organizationId,
       target_id: targetId,
+      project_target_id: targetId,
       employee_id: a.employee_id,
       allocated_value: Number(a.allocated_value) || 0,
       actual_value: 0,
@@ -974,7 +1397,7 @@ export async function getEmployeeWorkload(
         deadline_date,
         project_id,
         status,
-        projects (id, name)
+        projects:project_id (id, name)
       )
     `)
     .eq('employee_id', employeeId)

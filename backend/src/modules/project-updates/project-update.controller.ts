@@ -7,6 +7,7 @@ import {
   getProjectDailyUpdates,
   submitProjectTeamUpdate,
   getProjectTeamUpdates,
+  getCompanyDailyUpdates,
 } from './project-update.service.js'
 
 function getCurrentUserId(req: Request): string | undefined {
@@ -259,6 +260,44 @@ export async function getTeamUpdatesController(
     })
   } catch (error: any) {
     return res.status(400).json({
+      success: false,
+      message: error.message,
+    })
+  }
+}
+
+export async function getCompanyDailyUpdatesController(
+  req: Request,
+  res: Response,
+) {
+  try {
+    const organizationId = req.profile?.organization_id
+
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Organization ID not found in profile.',
+      })
+    }
+
+    const { employeeId, fromDate, toDate } = req.query as {
+      employeeId?: string
+      fromDate?: string
+      toDate?: string
+    }
+
+    const data = await getCompanyDailyUpdates(organizationId, {
+      employeeId,
+      fromDate,
+      toDate,
+    })
+
+    return res.json({
+      success: true,
+      data,
+    })
+  } catch (error: any) {
+    return res.status(500).json({
       success: false,
       message: error.message,
     })

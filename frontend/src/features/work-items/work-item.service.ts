@@ -28,6 +28,40 @@ export interface WorkItem {
   completed_at: string | null
   created_at: string
   updated_at: string
+  target_quantity?: number | null
+  completed_quantity?: number | null
+  quantity_unit?: string | null
+  pacing_start_date?: string | null
+  pacing_enabled?: boolean
+  pacing?: {
+    enabled: boolean
+    status:
+      | 'NOT_TRACKED'
+      | 'SCHEDULED'
+      | 'AHEAD'
+      | 'ON_TRACK'
+      | 'AT_RISK'
+      | 'BEHIND'
+      | 'WORKLOAD_INCREASING'
+      | 'OVERDUE'
+      | 'COMPLETED'
+    targetQuantity: number
+    completedQuantity: number
+    expectedQuantity: number
+    todayTarget?: number
+    backlog?: number
+    isBacklog?: boolean
+    remainingQuantity: number
+    progressPercent: number
+    totalDays: number
+    elapsedDays: number
+    remainingDays: number
+    initialPerDay?: number
+    requiredPerDay: number
+    workloadIncreased?: boolean
+    recommendedIntervalDays: number | null
+    recommendedPaceText?: string
+  }
   projects?: {
     id: string
     name: string
@@ -130,6 +164,11 @@ export async function createWorkItem(
     estimated_hours?: number | null
     actual_hours?: number | null
     story_points?: number | null
+    target_quantity?: number | null
+    completed_quantity?: number | null
+    quantity_unit?: string | null
+    pacing_start_date?: string | null
+    pacing_enabled?: boolean
   },
 ) {
   return request(token, '/work-items', {
@@ -156,6 +195,11 @@ export async function updateWorkItem(
     actual_hours?: number | null
     progress_percent?: number
     assignment_reason?: string
+    target_quantity?: number | null
+    completed_quantity?: number | null
+    quantity_unit?: string | null
+    pacing_start_date?: string | null
+    pacing_enabled?: boolean
   },
 ) {
   return request(token, `/work-items/${id}`, {

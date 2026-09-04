@@ -16,6 +16,7 @@ import {
 } from './work-item.service.js'
 import { transitionWorkItemStatus } from './work-item-status.service.js'
 import { getActivity } from '../work-activity/work-activity.service.js'
+import { runDeadlineMonitor } from './work-item-deadline-monitor.service.js'
 
 export async function listWorkItems(req: Request, res: Response) {
   try {
@@ -122,6 +123,51 @@ export async function addWorkItem(req: Request, res: Response) {
         error instanceof Error
           ? error.message
           : 'Unable to create work item.',
+    })
+  }
+}
+
+export async function addWorkItemsBulk(req: Request, res: Response) {
+  try {
+    const organizationId = req.profile?.organization_id
+    const userId = req.userId
+
+    if (!organizationId || !userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required.',
+      })
+    }
+
+    const role = req.profile?.role
+    const rawItems = Array.isArray(req.body)
+      ? req.body
+      : Array.isArray(req.body?.items)
+      ? req.body.items
+      : [req.body]
+
+    const createdItems = []
+    for (const item of rawItems) {
+      const created = await createWorkItem(
+        organizationId,
+        userId,
+        role,
+        item,
+      )
+      createdItems.push(created)
+    }
+
+    return res.status(201).json({
+      success: true,
+      data: createdItems,
+    })
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to create work items in bulk.',
     })
   }
 }
@@ -537,6 +583,37 @@ export async function listWorkActivity(req: Request, res: Response) {
         error instanceof Error
           ? error.message
           : 'Unable to load activity.',
+    })
+  }
+}
+
+export async function runDeadlineMonitorNow(
+  req: Request,
+  res: Response,
+) {
+  try {
+    const role = req.profile?.role
+
+    if (role !== 'SUPER_ADMIN' && role !== 'ADMIN') {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized.',
+      })
+    }
+
+    const result = await runDeadlineMonitor()
+
+    return res.json({
+      success: true,
+      data: result,
+    })
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to run deadline monitor.',
     })
   }
 }

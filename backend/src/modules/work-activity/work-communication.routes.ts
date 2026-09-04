@@ -18,14 +18,14 @@ const router = Router()
 router.get(
   '/:id/comments',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER', 'EMPLOYEE'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'EMPLOYEE'),
   listComments,
 )
 
 router.post(
   '/:id/comments',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER', 'EMPLOYEE'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'EMPLOYEE'),
   createComment,
 )
 
@@ -33,14 +33,14 @@ router.post(
 router.get(
   '/:id/updates',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER', 'EMPLOYEE'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'EMPLOYEE'),
   listUpdates,
 )
 
 router.post(
   '/:id/updates',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER', 'EMPLOYEE'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'EMPLOYEE'),
   createUpdate,
 )
 
@@ -48,21 +48,21 @@ router.post(
 router.get(
   '/:id/concerns',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER', 'EMPLOYEE'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'EMPLOYEE'),
   listConcerns,
 )
 
 router.post(
   '/:id/concerns',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER', 'EMPLOYEE'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'EMPLOYEE'),
   addConcernHandler,
 )
 
 router.patch(
   '/concerns/:concernId/resolve',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER'),
   resolveConcernHandler,
 )
 
@@ -70,7 +70,7 @@ router.patch(
 router.get(
   '/:id/activity',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'MANAGER', 'EMPLOYEE'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'EMPLOYEE'),
   listActivity,
 )
 

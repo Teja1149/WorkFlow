@@ -31,6 +31,7 @@ import type { DailyTarget } from '../daily-targets/daily-target.types'
 import HealthBadge from '../../components/ui/HealthBadge'
 import StatusBadge from '../../components/ui/StatusBadge'
 import DeadlineCountdown from '../work-execution/DeadlineCountdown'
+import { StructuredWorkUpdateCard } from './work-update-parser'
 import {
   formatTargetValue,
   targetAchievement,
@@ -444,24 +445,16 @@ export default function WorkItemDrawer({
                 {loadingUpdates ? (
                   <p className="text-slate-400 py-3 text-center">Loading updates...</p>
                 ) : updates.length === 0 ? (
-                  <p className="text-slate-400 py-3 text-center italic">No updates recorded yet.</p>
+                  <div className="py-4 text-center text-xs text-slate-400 italic bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                    No work updates yet.
+                  </div>
                 ) : (
                   updates.map((up) => (
-                    <div
+                    <StructuredWorkUpdateCard
                       key={up.id}
-                      className="rounded-xl border border-slate-200 bg-white p-3 space-y-1 shadow-2xs"
-                    >
-                      <div className="flex items-center justify-between text-[10px] text-slate-400">
-                        <span className="font-bold text-slate-700">
-                          {(up as any).employee?.first_name || 'Employee'}
-                        </span>
-                        <span>{new Date(up.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                      </div>
-                      <p className="text-xs text-slate-800 font-medium">{up.update_text}</p>
-                      <div className="text-[10px] font-semibold text-slate-400">
-                        Work update
-                      </div>
-                    </div>
+                      update={up}
+                      unit={workItem.quantity_unit || 'items'}
+                    />
                   ))
                 )}
               </div>

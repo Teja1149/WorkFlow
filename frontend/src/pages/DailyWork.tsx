@@ -80,14 +80,22 @@ function WorkCard({ item }: { item: DailyWorkItem }) {
               </span>
             )}
 
-            <span className="rounded-full bg-white/80 px-2 py-1">
+            <span className="rounded-full bg-white/80 px-2 py-1 font-semibold">
               {item.status}
             </span>
+
+            {item.target_quantity && Number(item.target_quantity) > 0 && (
+              <span className="rounded-full bg-[#801424]/10 text-[#801424] px-2 py-1 font-bold">
+                {item.completed_quantity || 0} / {item.target_quantity} {item.quantity_unit || 'items'}
+              </span>
+            )}
           </div>
         </div>
 
         <span className="shrink-0 text-sm font-bold">
-          {item.progress_percent || 0}%
+          {item.target_quantity && Number(item.target_quantity) > 0
+            ? `${Math.min(100, Math.round(((Number(item.completed_quantity) || 0) / Number(item.target_quantity)) * 100))}%`
+            : `${item.progress_percent || 0}%`}
         </span>
       </div>
 

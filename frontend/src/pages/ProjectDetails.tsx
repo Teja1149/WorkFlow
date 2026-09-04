@@ -381,12 +381,14 @@ export default function ProjectDetails() {
     setLoading(true)
     setError('')
     try {
-      const [projList, memList, empList, dtList, workItemList] = await Promise.all([
+      const [projList, memList, empList, dtList, workItemList, targetsList, summaryData] = await Promise.all([
         getProjects(accessToken).catch(() => []),
         getProjectMembers(accessToken, projectId).catch(() => []),
         getEmployees(accessToken).catch(() => []),
         getProjectDailyTargets(accessToken, projectId).catch(() => []),
         getWorkItems(accessToken).catch(() => []),
+        getProjectTargets(accessToken, projectId).catch(() => []),
+        getProjectTargetSummary(accessToken, projectId).catch(() => null),
       ])
 
       const safeProjects = Array.isArray(projList) ? projList : []
@@ -403,34 +405,27 @@ export default function ProjectDetails() {
       setProjectWorkItems(Array.isArray(workItemList) ? workItemList.filter((w) => w.project_id === projectId) : [])
       await loadProjectModules()
 
-      getProjectTargets(accessToken, projectId)
-        .then((targets) => {
-          setProjectTargets(targets)
-          if (targets.length > 0) {
-            setSelectedTarget(targets[0])
-          }
-        })
-        .catch(() => {})
+      const safeTargets = Array.isArray(targetsList) ? targetsList : []
+      setProjectTargets(safeTargets)
+      if (safeTargets.length > 0) {
+        setSelectedTarget(safeTargets[0])
+      }
 
-      getProjectTargetSummary(accessToken, projectId)
-        .then((s) => {
-          setTargetSummary(s)
-          if (s) {
-            if (!selectedTarget) setSelectedTarget(s)
-            setTargetName(s.name || 'Monthly Video Delivery')
-            setTargetValue(s.target_value)
-            setTargetUnit(s.unit)
-            setTargetType(s.target_type || 'COUNT')
-            setTargetEndDate(s.deadline_date)
-            setTargetWorkTypeId(s.work_type_id || '')
-            const allocs: Record<string, number> = {}
-            for (const a of s.allocations || []) {
-              allocs[a.employee_id] = a.allocated_value
-            }
-            setTargetAllocations(allocs)
-          }
-        })
-        .catch(() => setTargetSummary(null))
+      setTargetSummary(summaryData)
+      if (summaryData) {
+        if (!selectedTarget && safeTargets.length === 0) setSelectedTarget(summaryData)
+        setTargetName(summaryData.name || 'Monthly Deliverables')
+        setTargetValue(summaryData.target_value)
+        setTargetUnit(summaryData.unit || 'Items')
+        setTargetType(summaryData.target_type || 'COUNT')
+        setTargetEndDate(summaryData.deadline_date)
+        setTargetWorkTypeId(summaryData.work_type_id || '')
+        const allocs: Record<string, number> = {}
+        for (const a of summaryData.allocations || []) {
+          allocs[a.employee_id] = a.allocated_value
+        }
+        setTargetAllocations(allocs)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load project details.')
     } finally {
@@ -622,6 +617,7 @@ export default function ProjectDetails() {
     try {
       await addProjectMember(accessToken, projectId, selectedUserId)
       setSelectedUserId('')
+      setShowAddMember(false)
       const updatedMembers = await getProjectMembers(accessToken, projectId)
       setMembers(updatedMembers)
     } catch (err) {
@@ -1003,23 +999,63 @@ export default function ProjectDetails() {
           </div>
         )}
 
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Users size={16} className="text-[#801424]" />
-            <div>
-              <span className="text-slate-400 font-medium">Team Members:</span>{' '}
-              <span className="font-bold text-slate-800">{members.length} assigned</span>
+        <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Users size={16} className="text-[#801424]" />
+              <div>
+                <span className="text-slate-400 font-medium text-xs">Team Members:</span>{' '}
+                <span className="font-bold text-slate-800 text-xs">{members.length} assigned</span>
+              </div>
             </div>
+
+            {canManageTeam && (
+              <button
+                type="button"
+                onClick={() => setShowAddMember(!showAddMember)}
+                className="text-[#801424] hover:bg-rose-50 px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <UserPlus size={14} />
+                <span>{showAddMember ? 'Close' : 'Add Member'}</span>
+              </button>
+            )}
           </div>
 
-          {(profile?.role === 'MANAGER' || profile?.role === 'ADMIN' || profile?.role === 'SUPER_ADMIN') && (
-            <button
-              onClick={() => setShowAddMember(!showAddMember)}
-              className="text-[#801424] hover:underline font-bold flex items-center gap-1"
-            >
-              <UserPlus size={14} />
-              {showAddMember ? 'Cancel' : 'Add Member'}
-            </button>
+          {showAddMember && (
+            <div className="border-t border-slate-100 pt-3">
+              <form onSubmit={handleAddMember} className="space-y-2">
+                <div className="flex flex-wrap sm:flex-nowrap gap-2">
+                  <select
+                    value={selectedUserId}
+                    onChange={(e) => setSelectedUserId(e.target.value)}
+                    className="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-[#801424] bg-white font-semibold text-slate-900"
+                  >
+                    <option value="">-- Select Employee to Add --</option>
+                    {employees
+                      .filter((emp) => !members.some((m) => m.user_id === emp.id || m.id === emp.id))
+                      .map((emp) => (
+                        <option key={emp.id} value={emp.id}>
+                          {emp.first_name} {emp.last_name || ''} ({emp.role} {emp.designation ? `· ${emp.designation}` : ''})
+                        </option>
+                      ))}
+                  </select>
+
+                  <button
+                    type="submit"
+                    disabled={submitting || !selectedUserId}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-[#801424] hover:bg-[#9f1239] text-white font-bold text-xs rounded-xl transition disabled:opacity-50 cursor-pointer shadow-xs"
+                  >
+                    <UserPlus size={13} />
+                    <span>{submitting ? 'Adding...' : 'Add Member'}</span>
+                  </button>
+                </div>
+                {employees.filter((emp) => !members.some((m) => m.user_id === emp.id || m.id === emp.id)).length === 0 && (
+                  <p className="text-[11px] text-slate-500 italic">
+                    All {employees.length} employees in your organization are already assigned to this project.
+                  </p>
+                )}
+              </form>
+            </div>
           )}
         </div>
       </div>
@@ -1205,7 +1241,7 @@ export default function ProjectDetails() {
                 className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#801424] px-4 py-2 text-xs font-bold text-white hover:bg-[#9f1239] transition cursor-pointer"
               >
                 <Plus size={14} />
-                + Add Target
+                Add Target
               </button>
             )}
           </div>
@@ -1511,12 +1547,13 @@ export default function ProjectDetails() {
                 if (!groups[empId]) groups[empId] = []
                 groups[empId].push(target)
                 return groups
-              }, {}),
-            ).map(([empId, empTargets]) => {
+              }, {} as Record<string, any[]>),
+            ).map(([empId, empTargetsList]) => {
+              const empTargets = empTargetsList as any[]
               const emp = empTargets[0]?.employee || employees.find((e) => e.id === empId)
               const empName = emp ? `${emp.first_name} ${emp.last_name || ''}`.trim() : 'Team Member'
               const empAchievement = Math.round(
-                empTargets.reduce((s, t) => s + Number(t.achievement_percent || 0), 0) / empTargets.length,
+                empTargets.reduce((s, t) => s + Number(t.achievement_percent || 0), 0) / (empTargets.length || 1),
               )
 
               return (
@@ -2497,6 +2534,11 @@ export default function ProjectDetails() {
                     </div>
 
                     <div className="flex items-center gap-3 shrink-0">
+                      {item.target_quantity && Number(item.target_quantity) > 0 && (
+                        <span className="text-[10px] font-bold bg-rose-50 border border-rose-200 text-[#801424] px-2 py-0.5 rounded">
+                          {item.completed_quantity || 0} / {item.target_quantity} {item.quantity_unit || 'items'}
+                        </span>
+                      )}
                       {item.assigned_to && (
                         <span className="text-[11px] text-slate-500 font-mono">
                           {employees.find((e) => e.id === item.assigned_to)?.first_name || 'Assigned'}

@@ -4,6 +4,7 @@ import { getOrganizationWorkSettings } from '../organization-settings/organizati
 import {
   createNotification,
   notifyStakeholders,
+  notifyWorkAssignment,
 } from '../notifications/notification.service.js'
 import { logActivity } from '../work-activity/work-activity.service.js'
 import type {
@@ -2454,10 +2455,17 @@ export async function createDailyTargetWithWorkItem(
     target_value: number
     unit: string
 
+    start_date?: string | null
     deadline_date?: string
     deadline?: string
     deadline_time?: string | null
     target_deadline_time?: string | null
+
+    target_quantity?: number | null
+    completed_quantity?: number | null
+    quantity_unit?: string | null
+    pacing_start_date?: string | null
+    pacing_enabled?: boolean
 
     priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
   },
@@ -2495,16 +2503,79 @@ export async function createDailyTargetWithWorkItem(
         description: workDescription,
         priority: input.priority || 'MEDIUM',
         status: 'TODO',
+        start_date: input.start_date || null,
         estimated_hours: input.estimated_hours ?? null,
         story_points: input.story_points ?? null,
         deadline: deadlineDate,
         deadline_time: input.deadline_time || null,
+        original_deadline: deadlineDate,
+
+        target_quantity: input.target_quantity ?? (input.pacing_enabled ? input.target_value : null),
+        completed_quantity: input.completed_quantity ?? 0,
+        quantity_unit: input.quantity_unit?.trim() || input.unit?.trim() || null,
+        pacing_start_date: input.pacing_start_date || input.start_date || null,
+        pacing_enabled: Boolean(
+          input.pacing_enabled &&
+          Number(input.target_quantity ?? input.target_value ?? 0) > 0,
+        ),
       })
       .select()
       .single()
 
   if (workError) {
     throw new Error(workError.message)
+  }
+
+  // Keep combined-card assignments consistent with normal work-item creation.
+  // This preserves assignment history, activity tracking and notifications.
+  try {
+    await supabaseAdmin
+      .from('work_assignment_history')
+      .insert({
+        work_item_id: workItem.id,
+        organization_id: organizationId,
+        previous_assignee: null,
+        new_assignee: employeeId,
+        changed_by: createdBy,
+        reason: 'Initial assignment via combined work target',
+      })
+  } catch (historyError) {
+    console.error(
+      'Failed to record combined work assignment history:',
+      historyError,
+    )
+  }
+
+  try {
+    await logActivity(
+      workItem.id,
+      createdBy,
+      'WORK_ASSIGNED',
+      `Created and assigned work item: ${workTitle}`,
+    )
+  } catch (activityError) {
+    console.error(
+      'Failed to log combined work assignment:',
+      activityError,
+    )
+  }
+
+  try {
+    await notifyWorkAssignment({
+      organizationId,
+      workItemId: workItem.id,
+      projectId: input.project_id || null,
+      title: 'New Work Assigned',
+      message: `You have been assigned "${workTitle}".`,
+      authorUserId: createdBy,
+      assignedTo: employeeId,
+      createdBy,
+    })
+  } catch (notificationError) {
+    console.error(
+      'Failed to notify combined work assignment:',
+      notificationError,
+    )
   }
 
   try {

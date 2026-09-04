@@ -44,6 +44,7 @@ import { getEmployees } from '../employees/employee.service'
 import { getProjects, type Project } from '../projects/project.service'
 import { getWorkTypes } from '../work-types/work-type.service'
 import type { WorkTypeField, WorkFieldType } from '../work-types/work-type.types'
+import { StructuredWorkUpdateCard } from './work-update-parser'
 import HealthBadge from '../../components/ui/HealthBadge'
 
 type Employee = any
@@ -209,7 +210,7 @@ export default function WorkDetailsDrawer({
     work.work_type_id || (work as any).work_types?.id || '',
   )
   const [targetValue, setTargetValue] = useState<number | string>(
-    linkedTarget?.target_value ?? (work as any).target_value ?? 2,
+    work.target_quantity ?? (work as any).quantity_target ?? linkedTarget?.target_value ?? 10,
   )
   const [scheduleMode, setScheduleMode] = useState<'AUTOMATIC' | 'MILESTONE' | 'MANUAL'>(
     'AUTOMATIC',
@@ -231,7 +232,7 @@ export default function WorkDetailsDrawer({
     profile?.role === 'MANAGER'
 
   const statusConfig = getWorkStatusConfig(work.status)
-  const unit = linkedTarget?.unit || (work as any).unit || (work.work_types as any)?.unit || 'Videos'
+  const unit = work.quantity_unit || linkedTarget?.unit || (work as any).unit || (work.work_types as any)?.unit || 'Items'
 
   // Resolve dynamic fields from work_types
   const activeFields = useMemo(() => {
@@ -257,31 +258,31 @@ export default function WorkDetailsDrawer({
       }))
     }
 
-    // Default fields fallback
+    // Default fields fallback with Step 21 structured questions
     return [
       {
         id: 'videos_completed',
         key: 'videos_completed',
-        label: 'Videos Completed',
+        label: 'Completed Output (Units/Items)',
         type: 'NUMBER' as WorkFieldType,
-        required: true,
+        required: false,
         counts_toward_target: true,
         order: 1,
       },
       {
-        id: 'videos_exported',
-        key: 'videos_exported',
-        label: 'Videos Exported',
-        type: 'NUMBER' as WorkFieldType,
+        id: 'completed_today',
+        key: 'completed_today',
+        label: 'What did you complete today?',
+        type: 'LONG_TEXT' as WorkFieldType,
         required: false,
         counts_toward_target: false,
         order: 2,
       },
       {
-        id: 'revisions',
-        key: 'revisions',
-        label: 'Revisions',
-        type: 'NUMBER' as WorkFieldType,
+        id: 'working_on_now',
+        key: 'working_on_now',
+        label: 'What are you working on now?',
+        type: 'LONG_TEXT' as WorkFieldType,
         required: false,
         counts_toward_target: false,
         order: 3,
@@ -289,20 +290,11 @@ export default function WorkDetailsDrawer({
       {
         id: 'blocker',
         key: 'blocker',
-        label: 'Blocker',
+        label: 'Any blockers? (Required if marking blocked)',
         type: 'LONG_TEXT' as WorkFieldType,
         required: false,
         counts_toward_target: false,
         order: 4,
-      },
-      {
-        id: 'notes',
-        key: 'notes',
-        label: 'Notes',
-        type: 'LONG_TEXT' as WorkFieldType,
-        required: false,
-        counts_toward_target: false,
-        order: 5,
       },
     ]
   }, [work, workTypes, workTypeId])
@@ -372,16 +364,58 @@ export default function WorkDetailsDrawer({
   }, [accessToken, work.id, isManagerOrAdmin])
 
   // STATUS TRANSITION (Clean 4-state flow: TODO -> IN_PROGRESS -> DONE / BLOCKED)
-  async function handleStatusTransition(nextStatus: 'TODO' | 'IN_PROGRESS' | 'BLOCKED' | 'DONE') {
+  async function handleStatusTransition(
+    nextStatus:
+      | 'TODO'
+      | 'IN_PROGRESS'
+      | 'BLOCKED'
+      | 'DONE',
+  ) {
     if (!accessToken) return
+
+    const blockerDetails = String(
+      reportValues.blocker ||
+      reportValues.notes ||
+      reportValues.comment ||
+      '',
+    ).trim()
+
+    if (
+      nextStatus === 'BLOCKED' &&
+      !blockerDetails
+    ) {
+      setError(
+        'Please enter the blocker details before marking this work as blocked.',
+      )
+      return
+    }
+
     setSubmitting(true)
     setError('')
+    setSuccessMsg('')
+
     try {
-      await updateWorkItemStatus(accessToken, work.id, nextStatus)
-      setSuccessMsg(`✓ Status updated to ${getWorkStatusConfig(nextStatus).label}`)
+      await updateWorkItemStatus(
+        accessToken,
+        work.id,
+        nextStatus,
+        nextStatus === 'BLOCKED'
+          ? blockerDetails
+          : undefined,
+      )
+
+      setSuccessMsg(
+        `✓ Status updated to ${
+          getWorkStatusConfig(nextStatus).label
+        }`,
+      )
+
       await onChanged()
     } catch (err: any) {
-      setError(err?.message || 'Status transition failed.')
+      setError(
+        err?.message ||
+        'Status transition failed.',
+      )
     } finally {
       setSubmitting(false)
     }
@@ -517,7 +551,12 @@ export default function WorkDetailsDrawer({
         })
       }
 
-      // 3. Status update if starting from TODO
+      // 3. Update Work Item with completed quantity & progress
+      await updateWorkItem(accessToken, work.id, {
+        completed_quantity: actualValue,
+      })
+
+      // 4. Status update if starting from TODO
       if (work.status === 'TODO') {
         await updateWorkItemStatus(accessToken, work.id, 'IN_PROGRESS')
       }
@@ -559,7 +598,12 @@ export default function WorkDetailsDrawer({
         actual_value: actualValue,
       })
 
-      // 3. Mark work item DONE
+      // 3. Update completed quantity on work item
+      await updateWorkItem(accessToken, work.id, {
+        completed_quantity: work.target_quantity ? Number(work.target_quantity) : actualValue,
+      })
+
+      // 4. Mark work item DONE
       await updateWorkItemStatus(accessToken, work.id, 'DONE')
 
       setSuccessMsg('🎉 Work completed successfully!')
@@ -702,6 +746,72 @@ export default function WorkDetailsDrawer({
               </div>
             </div>
 
+            {/* SECTION: QUANTITY PACING TRACKER */}
+            {work.pacing?.enabled && (
+              <div className="rounded-2xl border border-rose-100 bg-rose-50/40 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[#801424] font-mono flex items-center gap-1.5">
+                    <Clock size={13} />
+                    DEADLINE PACING INTELLIGENCE
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-black tracking-wide ${
+                      work.pacing.status === 'OVERDUE'
+                        ? 'bg-red-600 text-white'
+                        : work.pacing.status === 'BEHIND'
+                        ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                        : work.pacing.status === 'WORKLOAD_INCREASING' || work.pacing.status === 'AT_RISK'
+                        ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                        : work.pacing.status === 'AHEAD'
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                        : work.pacing.status === 'SCHEDULED'
+                        ? 'bg-slate-100 text-slate-700 border border-slate-200'
+                        : 'bg-teal-100 text-teal-800 border border-teal-200'
+                    }`}
+                  >
+                    {work.pacing.status}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                  <div className="bg-white p-2 rounded-xl border border-slate-200">
+                    <span className="text-[9px] uppercase font-bold text-slate-400 block">Target Qty</span>
+                    <span className="text-sm font-black text-slate-900">
+                      {work.pacing.targetQuantity} <span className="text-[9px] text-slate-400">{work.quantity_unit || 'items'}</span>
+                    </span>
+                  </div>
+                  <div className="bg-white p-2 rounded-xl border border-slate-200">
+                    <span className="text-[9px] uppercase font-bold text-slate-400 block">Expected Now</span>
+                    <span className="text-sm font-black text-slate-900">
+                      {work.pacing.expectedQuantity} <span className="text-[9px] text-slate-400">{work.quantity_unit || 'items'}</span>
+                    </span>
+                  </div>
+                  <div className="bg-white p-2 rounded-xl border border-slate-200">
+                    <span className="text-[9px] uppercase font-bold text-slate-400 block">Required/Day</span>
+                    <span className="text-sm font-black text-rose-700">
+                      {work.pacing.requiredPerDay} <span className="text-[9px] text-slate-400">/day</span>
+                    </span>
+                  </div>
+                  <div className="bg-white p-2 rounded-xl border border-slate-200">
+                    <span className="text-[9px] uppercase font-bold text-slate-400 block">Days Left</span>
+                    <span className="text-sm font-black text-slate-900">
+                      {work.pacing.remainingDays} <span className="text-[9px] text-slate-400">days</span>
+                    </span>
+                  </div>
+                </div>
+
+                {work.pacing.recommendedPaceText ? (
+                  <p className="text-[11px] font-semibold text-slate-700 bg-white/80 rounded-xl p-2 border border-slate-200/60">
+                    🎯 Recommended Pace: {work.pacing.recommendedPaceText}
+                  </p>
+                ) : work.pacing.recommendedIntervalDays ? (
+                  <p className="text-[11px] font-semibold text-slate-700 bg-white/80 rounded-xl p-2 border border-slate-200/60">
+                    🎯 Recommended Pace: 1 {work.quantity_unit || 'item'} every {work.pacing.recommendedIntervalDays} days over {work.pacing.totalDays} total days.
+                  </p>
+                ) : null}
+              </div>
+            )}
+
             {/* IF ADMIN/MANAGER MANAGE VIEW */}
             {isManagerOrAdmin && !isOwnWork && (
               <div className="space-y-4">
@@ -732,7 +842,7 @@ export default function WorkDetailsDrawer({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                          Monthly Target
+                          Overall Target ({unit})
                         </label>
                         <input
                           type="number"
@@ -755,6 +865,13 @@ export default function WorkDetailsDrawer({
                         />
                       </div>
                     </div>
+
+                    {linkedTarget && (
+                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 text-[11px] text-slate-600">
+                        <span className="font-bold text-slate-800 block">Today's Daily Target:</span>
+                        <span>{linkedTarget.actual_value || 0} / {linkedTarget.target_value} {linkedTarget.unit}</span>
+                      </div>
+                    )}
 
                     <div className="flex gap-2 pt-2">
                       <button
@@ -806,6 +923,57 @@ export default function WorkDetailsDrawer({
                       {activeFields.length} fields
                     </span>
                   </div>
+
+                  {/* Step 21.9 — Quantity progress update stepper */}
+                  {Number(work.target_quantity || 0) > 0 && (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="block text-xs font-bold text-slate-800">
+                          Completed Quantity ({work.quantity_unit || 'Units'})
+                        </label>
+                        <span className="text-xs font-black text-[#801424]">
+                          {Math.min(100, Math.round((actualValue / Number(work.target_quantity)) * 100))}%
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const currentVal = Number(reportValues.videos_completed || reportValues.completed || actualValue || 0)
+                            const nextVal = Math.max(0, currentVal - 1)
+                            setReportValues((prev) => ({
+                              ...prev,
+                              videos_completed: nextVal,
+                              completed: nextVal,
+                              actual_value: nextVal,
+                            }))
+                          }}
+                          className="h-8 w-8 rounded-lg bg-white border border-slate-200 font-black text-slate-700 hover:bg-slate-100 flex items-center justify-center cursor-pointer text-sm shadow-2xs"
+                        >
+                          -
+                        </button>
+                        <span className="text-base font-black text-slate-900 min-w-16 text-center">
+                          {actualValue} / {work.target_quantity} {work.quantity_unit || 'items'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const currentVal = Number(reportValues.videos_completed || reportValues.completed || actualValue || 0)
+                            const nextVal = currentVal + 1
+                            setReportValues((prev) => ({
+                              ...prev,
+                              videos_completed: nextVal,
+                              completed: nextVal,
+                              actual_value: nextVal,
+                            }))
+                          }}
+                          className="h-8 w-8 rounded-lg bg-[#801424] text-white font-black hover:bg-[#9f1239] flex items-center justify-center cursor-pointer text-sm shadow-2xs"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="space-y-3">
                     {activeFields.map((field: any) => (
@@ -932,7 +1100,7 @@ export default function WorkDetailsDrawer({
                 {latestUpdate && (
                   <div className="flex items-center gap-4 text-[11px] font-bold text-slate-500">
                     <span>
-                      Completed: {latestUpdate.actual_value ?? actualValue ?? 0}
+                      Completed: {latestUpdate.actual_value ?? actualValue ?? 0} {unit}
                     </span>
                     {linkedTarget && (
                       <span>
@@ -943,17 +1111,18 @@ export default function WorkDetailsDrawer({
                 )}
               </div>
 
-              <div className="space-y-2 max-h-36 overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
                 {updates.map((u) => (
-                  <div key={u.id} className="p-2.5 rounded-xl bg-slate-50 border border-slate-100 text-[11px]">
-                    <p className="text-slate-800 font-semibold">{u.update_text}</p>
-                    <span className="text-[10px] text-slate-400 mt-1 block">
-                      {new Date(u.created_at).toLocaleString()}
-                    </span>
-                  </div>
+                  <StructuredWorkUpdateCard
+                    key={u.id}
+                    update={u}
+                    unit={unit}
+                  />
                 ))}
                 {updates.length === 0 && (
-                  <p className="text-slate-400 italic text-center py-2">No updates posted yet.</p>
+                  <div className="py-4 text-center text-xs text-slate-400 italic bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                    No work updates yet.
+                  </div>
                 )}
               </div>
             </div>

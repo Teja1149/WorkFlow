@@ -28,6 +28,10 @@ import {
 import { getWorkTypes } from '../features/work-types/work-type.service'
 import { getProjects, type Project } from '../features/projects/project.service'
 import { getEmployees } from '../features/employees/employee.service'
+import {
+  splitQuantity,
+  validateAllocation,
+} from '../features/work-items/work-allocation.service'
 
 type WorkType = any
 type Employee = any
@@ -61,9 +65,13 @@ export default function WorkPlannerModal({
   const [targetName, setTargetName] = useState('')
   const [selectedWorkTypeId, setSelectedWorkTypeId] = useState('')
   const [targetType, setTargetType] = useState<ProjectTargetType>('COUNT')
-  const [unit, setUnit] = useState('Videos')
+  const [unit, setUnit] = useState('Items')
   const [targetValue, setTargetValue] = useState<number | ''>(10)
   const [period, setPeriod] = useState<ProjectTargetPeriod>('MONTHLY')
+
+  // Allocation Method & Tracking Mode
+  const [allocationMethod, setAllocationMethod] = useState<'EQUAL' | 'MANUAL' | 'INDIVIDUAL'>('EQUAL')
+  const [trackingMode, setTrackingMode] = useState<'COMBINED' | 'SEPARATE'>('COMBINED')
 
   // Date ranges
   const todayIso = new Date().toISOString().slice(0, 10)
@@ -109,8 +117,8 @@ export default function WorkPlannerModal({
       required: boolean
     }>
   >([
-    { label: 'Videos Completed', type: 'number', counts_toward_target: true, required: true },
-    { label: 'Videos Exported', type: 'number', counts_toward_target: false, required: true },
+    { label: 'Completed Output', type: 'number', counts_toward_target: true, required: true },
+    { label: 'Deliverables Finished', type: 'text', counts_toward_target: false, required: false },
     { label: 'Revisions', type: 'number', counts_toward_target: false, required: false },
     { label: 'Blocker', type: 'paragraph', counts_toward_target: false, required: false },
     { label: 'Comments', type: 'paragraph', counts_toward_target: false, required: false },
@@ -263,6 +271,46 @@ export default function WorkPlannerModal({
     setMilestones((prev) => prev.filter((_, i) => i !== index))
   }
 
+  // Apply Equal Split
+  function applyEqualSplit(employeeList?: string[]) {
+    const selectedIds =
+      employeeList ||
+      Object.entries(allocations)
+        .filter(([_, a]) => a.selected)
+        .map(([id]) => id)
+
+    const activeIds =
+      selectedIds.length > 0
+        ? selectedIds
+        : employees.slice(0, Math.min(3, employees.length)).map((e) => e.id)
+
+    if (!activeIds.length) return
+
+    const splits = splitQuantity(targetNum, activeIds)
+    const updatedAllocs = { ...allocations }
+
+    employees.forEach((emp) => {
+      const s = splits.find((item) => item.employeeId === emp.id)
+      if (s) {
+        const dailyPace = Math.max(1, Math.ceil(s.quantity / Math.max(1, Math.min(20, daysDiff))))
+        updatedAllocs[emp.id] = {
+          selected: true,
+          monthly: s.quantity,
+          daily: dailyPace,
+          deadline: deadlineDate,
+        }
+      } else if (selectedIds.length > 0 && !selectedIds.includes(emp.id)) {
+        updatedAllocs[emp.id] = {
+          selected: false,
+          monthly: 0,
+          daily: 0,
+          deadline: deadlineDate,
+        }
+      }
+    })
+    setAllocations(updatedAllocs)
+  }
+
   // Toggle employee selection
   function handleToggleEmployee(empId: string) {
     setAllocations((prev) => {
@@ -272,12 +320,13 @@ export default function WorkPlannerModal({
         daily: 1,
         deadline: deadlineDate,
       }
+      const newSelected = !existing.selected
       return {
         ...prev,
         [empId]: {
           ...existing,
-          selected: !existing.selected,
-          monthly: !existing.selected ? existing.monthly || 2 : 0,
+          selected: newSelected,
+          monthly: newSelected ? existing.monthly || 2 : 0,
         },
       }
     })
@@ -346,6 +395,15 @@ export default function WorkPlannerModal({
           allocated_value: Number(a.monthly) || 0,
         }))
 
+      if (selectedAllocs.length > 0) {
+        const valRes = validateAllocation(Number(targetValue) || 0, selectedAllocs)
+        if (!valRes.isValid) {
+          setError(valRes.message)
+          setSaving(false)
+          return
+        }
+      }
+
       // Build target payload
       const payload = {
         project_id: projectId,
@@ -357,6 +415,10 @@ export default function WorkPlannerModal({
         period_start: startDate,
         period_end: deadlineDate,
         deadline_date: deadlineDate,
+        tracking_mode:
+          trackingMode === 'SEPARATE' || allocationMethod === 'INDIVIDUAL'
+            ? 'SEPARATE'
+            : 'COMBINED',
         schedule_mode:
           distributionMode === 'EVEN_DAILY'
             ? 'AUTOMATIC_DAILY'
@@ -548,16 +610,21 @@ export default function WorkPlannerModal({
 
           <hr className="border-slate-100" />
 
-          {/* SECTION 2: ASSIGN PEOPLE */}
+          {/* SECTION 2: ASSIGN PEOPLE & ALLOCATION METHOD */}
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 font-mono flex items-center gap-1.5">
-                <Users size={14} className="text-[#801424]" />
-                ASSIGN PEOPLE
-              </h3>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 font-mono flex items-center gap-1.5">
+                  <Users size={14} className="text-[#801424]" />
+                  ASSIGN PEOPLE & ALLOCATION METHOD
+                </h3>
+                <p className="text-[11px] text-slate-500 font-medium">
+                  Choose how the project deliverable is allocated across team members.
+                </p>
+              </div>
 
               <div
-                className={`px-3 py-1 rounded-full font-mono font-bold text-xs border ${
+                className={`px-3 py-1 rounded-full font-mono font-bold text-xs border self-start ${
                   allocationRemaining === 0
                     ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                     : allocationRemaining > 0
@@ -566,9 +633,66 @@ export default function WorkPlannerModal({
                 }`}
               >
                 Allocation: {totalAllocated} / {targetNum} {unit}
-                {allocationRemaining > 0 && ` (${allocationRemaining} unassigned)`}
-                {allocationRemaining < 0 && ` (${Math.abs(allocationRemaining)} over)`}
+                {allocationRemaining > 0 && ` (${allocationRemaining} unallocated)`}
+                {allocationRemaining < 0 && ` (${Math.abs(allocationRemaining)} over target)`}
               </div>
+            </div>
+
+            {/* Allocation Method Radio Group */}
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-4">
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-800">
+                  <input
+                    type="radio"
+                    name="allocMethod"
+                    value="EQUAL"
+                    checked={allocationMethod === 'EQUAL'}
+                    onChange={() => {
+                      setAllocationMethod('EQUAL')
+                      applyEqualSplit()
+                    }}
+                    className="accent-[#801424]"
+                  />
+                  <span>Automatic Equal Split</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-800">
+                  <input
+                    type="radio"
+                    name="allocMethod"
+                    value="MANUAL"
+                    checked={allocationMethod === 'MANUAL'}
+                    onChange={() => setAllocationMethod('MANUAL')}
+                    className="accent-[#801424]"
+                  />
+                  <span>Manual Allocation</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-800">
+                  <input
+                    type="radio"
+                    name="allocMethod"
+                    value="INDIVIDUAL"
+                    checked={allocationMethod === 'INDIVIDUAL'}
+                    onChange={() => {
+                      setAllocationMethod('INDIVIDUAL')
+                      setTrackingMode('SEPARATE')
+                    }}
+                    className="accent-[#801424]"
+                  />
+                  <span>Individual Work Items</span>
+                </label>
+              </div>
+
+              {allocationMethod === 'EQUAL' && (
+                <button
+                  type="button"
+                  onClick={() => applyEqualSplit()}
+                  className="px-3 py-1 rounded-lg bg-[#801424] text-white text-xs font-bold hover:bg-[#9f1239] cursor-pointer"
+                >
+                  ⚡ Auto-Split Evenly
+                </button>
+              )}
             </div>
 
             {/* People Assignment Table */}
@@ -578,6 +702,7 @@ export default function WorkPlannerModal({
                   <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-mono text-[10px] uppercase">
                     <th className="py-2.5 px-4 font-bold">Assign</th>
                     <th className="py-2.5 px-4 font-bold">Employee</th>
+                    <th className="py-2.5 px-4 font-bold">Workload</th>
                     <th className="py-2.5 px-4 font-bold">Target ({unit})</th>
                     <th className="py-2.5 px-4 font-bold">Daily Pace</th>
                   </tr>
@@ -595,6 +720,9 @@ export default function WorkPlannerModal({
                       emp.display_name ||
                       `${emp.first_name || ''} ${emp.last_name || ''}`.trim() ||
                       emp.email
+                    const cap = capacityList.find((c) => c.employee_id === emp.id)
+                    const curWorkload = cap?.current_workload ?? 0
+                    const isOverloaded = curWorkload > (cap?.daily_capacity ?? 8)
 
                     return (
                       <tr
@@ -612,6 +740,17 @@ export default function WorkPlannerModal({
                           />
                         </td>
                         <td className="py-2.5 px-4 font-bold text-slate-900">{empName}</td>
+                        <td className="py-2.5 px-4">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              isOverloaded
+                                ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            }`}
+                          >
+                            {curWorkload} active {isOverloaded ? '⚠ High' : '✓ OK'}
+                          </span>
+                        </td>
                         <td className="py-2.5 px-4">
                           <div className="flex items-center gap-1.5">
                             <input

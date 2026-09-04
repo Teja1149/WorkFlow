@@ -92,6 +92,7 @@ export interface ProjectTarget {
   deadline_time?: string | null
   schedule_mode?: string
   work_type_id?: string | null
+  tracking_mode?: 'COMBINED' | 'SEPARATE'
   days_remaining: number
   required_pace: number
   allocations: EmployeeAllocation[]
@@ -114,6 +115,7 @@ export interface CreateProjectTargetInput {
   schedule_mode?: 'AUTOMATIC_DAILY' | 'MILESTONE' | 'MANUAL' | string
   description?: string | null
   work_type_id?: string | null
+  tracking_mode?: 'COMBINED' | 'SEPARATE'
   allocations?: Array<{
     employee_id: string
     allocated_value: number
@@ -141,6 +143,7 @@ export interface UpdateProjectTargetInput {
   status?: string
   health?: 'GREEN' | 'AMBER' | 'RED'
   work_type_id?: string | null
+  tracking_mode?: 'COMBINED' | 'SEPARATE'
   allocations?: Array<{
     employee_id: string
     allocated_value: number

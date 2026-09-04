@@ -46,6 +46,8 @@ import {
   type OrganizationWorkSettings,
 } from '../features/organization-settings/organization-setting.service'
 import { getEmployeeDailyTargets } from '../features/daily-targets/daily-target.service'
+import { getProjectTargets } from '../features/project-targets/project-target.service'
+import { StructuredWorkUpdateCard } from '../features/work-items/work-update-parser'
 import StatusBadge from '../components/ui/StatusBadge'
 import HealthBadge from '../components/ui/HealthBadge'
 
@@ -61,6 +63,7 @@ export default function WorkItemDetails() {
   const [concerns, setConcerns] = useState<WorkConcern[]>([])
   const [settings, setSettings] = useState<OrganizationWorkSettings | null>(null)
   const [linkedDailyTarget, setLinkedDailyTarget] = useState<any | null>(null)
+  const [projectTarget, setProjectTarget] = useState<any | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -71,6 +74,7 @@ export default function WorkItemDetails() {
   const [workedToday, setWorkedToday] = useState('')
   const [completedWork, setCompletedWork] = useState('')
   const [blockersNextSteps, setBlockersNextSteps] = useState('')
+  const [cumulativeQuantity, setCumulativeQuantity] = useState<number | string>('')
   const [updateSubmitting, setUpdateSubmitting] = useState(false)
   const [showUpdateModal, setShowUpdateModal] = useState(false)
 
@@ -127,6 +131,22 @@ export default function WorkItemDetails() {
           // Ignore target load failure
         }
       }
+
+      // Check if there is a project target linked to this work item
+      if (item.project_id) {
+        try {
+          const pTargets = await getProjectTargets(accessToken, item.project_id)
+          if (pTargets && pTargets.length > 0) {
+            const matched = (item as any).project_target_id
+              ? pTargets.find((t: any) => t.id === (item as any).project_target_id) || pTargets[0]
+              : pTargets[0]
+            setProjectTarget(matched)
+          }
+        } catch {
+          // Ignore project target load failure
+        }
+      }
+
       setComments(comList)
       setUpdates(upList)
       setConcerns(conList)
@@ -169,7 +189,7 @@ export default function WorkItemDetails() {
     }
   }
 
-  // 3-field Work Update submission
+  // 3-field Work Update submission (Clean structured storage)
   async function handleAddUpdate(e?: React.FormEvent) {
     if (e) e.preventDefault()
     if (!accessToken || !workItemId || !workedToday.trim()) return
@@ -179,14 +199,30 @@ export default function WorkItemDetails() {
     }
     setUpdateSubmitting(true)
     try {
-      const parts = [
-        `What did you work on today?\n${workedToday.trim()}`,
-        completedWork.trim() ? `What is completed?\n${completedWork.trim()}` : '',
-        blockersNextSteps.trim() ? `Any blocker / next step?\n${blockersNextSteps.trim()}` : '',
+      const targetQty = Number(workItem?.target_quantity || 0)
+      const nextQty = cumulativeQuantity !== '' ? Math.max(0, Number(cumulativeQuantity)) : undefined
+
+      if (targetQty > 0 && nextQty !== undefined) {
+        await updateWorkItem(accessToken, workItemId, {
+          completed_quantity: nextQty,
+        })
+      }
+
+      const cleanParts = [
+        workedToday.trim(),
+        completedWork.trim() ? `Completed: ${completedWork.trim()}` : '',
+        blockersNextSteps.trim() ? `Blockers / Next Steps: ${blockersNextSteps.trim()}` : '',
       ].filter(Boolean)
 
       await addWorkUpdate(accessToken, workItemId, {
-        update_text: parts.join('\n\n'),
+        update_text: cleanParts.join('\n\n') || workedToday.trim(),
+        report_data: {
+          worked_today: workedToday.trim(),
+          completed_work: completedWork.trim(),
+          blockers_next_steps: blockersNextSteps.trim(),
+          actual_value: nextQty,
+        },
+        actual_value: nextQty,
       })
       setWorkedToday('')
       setCompletedWork('')
@@ -327,54 +363,104 @@ export default function WorkItemDetails() {
           </span>
         </div>
 
-        {/* Step 179 — TODAY'S TARGET OVERVIEW */}
-        {linkedDailyTarget && (
-          <div className="rounded-2xl border border-[#801424]/20 bg-rose-50/40 p-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Target className="h-4 w-4 text-[#801424]" />
-                <span className="text-xs font-bold uppercase tracking-wider text-[#801424] font-mono">
-                  TODAY'S TARGET
-                </span>
-              </div>
-              <HealthBadge health={linkedDailyTarget.health || 'GREEN'} />
-            </div>
-
-            <div className="flex flex-wrap items-end justify-between gap-4">
-              <div>
-                <p className="text-base font-bold text-slate-900">
-                  {linkedDailyTarget.title}
-                </p>
-                <p className="text-xs text-slate-500 font-medium mt-0.5">
-                  {linkedDailyTarget.actual_value || 0} / {linkedDailyTarget.target_value} {linkedDailyTarget.unit} completed
-                  {Number(linkedDailyTarget.target_value) - Number(linkedDailyTarget.actual_value || 0) > 0 &&
-                    ` · ${Math.max(0, Number(linkedDailyTarget.target_value) - Number(linkedDailyTarget.actual_value || 0))} remaining`}
-                </p>
+        {/* Project Target & Daily Target Overviews */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {projectTarget && (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-5 space-y-3 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Target className="h-4 w-4 text-[#801424]" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-[#801424] font-mono">
+                    PROJECT OUTPUT TARGET
+                  </span>
+                </div>
+                <HealthBadge health={projectTarget.health || 'GREEN'} />
               </div>
 
-              <div className="text-right">
-                <p className="text-2xl font-extrabold text-[#801424]">
-                  {linkedDailyTarget.achievement_percent || 0}%
-                </p>
-                <p className="text-[10px] uppercase font-bold text-slate-400 font-mono">
-                  Achievement
-                </p>
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <p className="text-base font-bold text-slate-900">
+                    {projectTarget.name}
+                  </p>
+                  <p className="text-xs text-slate-500 font-medium mt-0.5">
+                    {projectTarget.actual_value || 0} / {projectTarget.target_value} {projectTarget.unit || 'Items'} total
+                    {Number(projectTarget.target_value) - Number(projectTarget.actual_value || 0) > 0 &&
+                      ` · ${Math.max(0, Number(projectTarget.target_value) - Number(projectTarget.actual_value || 0))} remaining`}
+                  </p>
+                </div>
+
+                <div className="text-right">
+                  <p className="text-2xl font-extrabold text-slate-900 font-mono">
+                    {projectTarget.achievement || 0}%
+                  </p>
+                  <p className="text-[10px] uppercase font-bold text-slate-400 font-mono">
+                    Achievement
+                  </p>
+                </div>
+              </div>
+
+              <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-emerald-600 transition-all"
+                  style={{ width: `${Math.min(100, projectTarget.achievement || 0)}%` }}
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
+                <span>Deadline: {projectTarget.deadline_date || 'No deadline'}</span>
+                <span className="font-semibold">{projectTarget.status || 'ACTIVE'}</span>
               </div>
             </div>
+          )}
 
-            <div className="h-2 rounded-full bg-rose-100 overflow-hidden">
-              <div
-                className="h-full rounded-full bg-[#801424] transition-all"
-                style={{ width: `${linkedDailyTarget.achievement_percent || 0}%` }}
-              />
-            </div>
+          {linkedDailyTarget && (
+            <div className="rounded-2xl border border-[#801424]/20 bg-rose-50/40 p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Target className="h-4 w-4 text-[#801424]" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-[#801424] font-mono">
+                    TODAY'S TARGET
+                  </span>
+                </div>
+                <HealthBadge health={linkedDailyTarget.health || 'GREEN'} />
+              </div>
 
-            <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
-              <span>Deadline: {linkedDailyTarget.deadline_time || 'End of day'}</span>
-              <span className="font-semibold">{linkedDailyTarget.status}</span>
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <p className="text-base font-bold text-slate-900">
+                    {linkedDailyTarget.title}
+                  </p>
+                  <p className="text-xs text-slate-500 font-medium mt-0.5">
+                    {linkedDailyTarget.actual_value || 0} / {linkedDailyTarget.target_value} {linkedDailyTarget.unit} completed
+                    {Number(linkedDailyTarget.target_value) - Number(linkedDailyTarget.actual_value || 0) > 0 &&
+                      ` · ${Math.max(0, Number(linkedDailyTarget.target_value) - Number(linkedDailyTarget.actual_value || 0))} remaining`}
+                  </p>
+                </div>
+
+                <div className="text-right">
+                  <p className="text-2xl font-extrabold text-[#801424] font-mono">
+                    {linkedDailyTarget.achievement_percent || 0}%
+                  </p>
+                  <p className="text-[10px] uppercase font-bold text-slate-400 font-mono">
+                    Achievement
+                  </p>
+                </div>
+              </div>
+
+              <div className="h-2 rounded-full bg-rose-100 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-[#801424] transition-all"
+                  style={{ width: `${linkedDailyTarget.achievement_percent || 0}%` }}
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
+                <span>Deadline: {linkedDailyTarget.deadline_time || 'End of day'}</span>
+                <span className="font-semibold">{linkedDailyTarget.status}</span>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -560,7 +646,18 @@ export default function WorkItemDetails() {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Progress</h2>
-            <span className="text-2xl font-bold text-slate-900 mt-1 block">{latestProgress}%</span>
+            {workItem.target_quantity && Number(workItem.target_quantity) > 0 ? (
+              <div className="mt-1 flex items-center gap-3">
+                <span className="text-2xl font-bold text-slate-900">
+                  {workItem.completed_quantity || 0} / {workItem.target_quantity} {workItem.quantity_unit || 'Items'} Completed
+                </span>
+                <span className="text-xs font-bold text-[#801424] bg-rose-50 px-2.5 py-0.5 rounded-full border border-rose-200">
+                  {Math.min(100, Math.round(((Number(workItem.completed_quantity) || 0) / Number(workItem.target_quantity)) * 100))}%
+                </span>
+              </div>
+            ) : (
+              <span className="text-2xl font-bold text-slate-900 mt-1 block">{latestProgress}%</span>
+            )}
           </div>
 
           <button
@@ -569,6 +666,7 @@ export default function WorkItemDetails() {
                 alert('This work is currently on hold. Resolve the blocker before posting an update.')
                 return
               }
+              setCumulativeQuantity(workItem.completed_quantity ?? 0)
               setShowUpdateModal(true)
             }}
             disabled={workItem.status === 'DONE'}
@@ -583,9 +681,81 @@ export default function WorkItemDetails() {
         <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
           <div
             className="h-full bg-slate-900 transition-all duration-500 rounded-full"
-            style={{ width: `${latestProgress}%` }}
+            style={{
+              width: `${
+                workItem.target_quantity && Number(workItem.target_quantity) > 0
+                  ? Math.min(100, Math.round(((Number(workItem.completed_quantity) || 0) / Number(workItem.target_quantity)) * 100))
+                  : latestProgress
+              }%`,
+            }}
           />
         </div>
+
+        {/* Deadline Pacing Intelligence */}
+        {workItem.pacing?.enabled && (
+          <div className="mt-4 rounded-xl border border-rose-100 bg-rose-50/40 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-wider text-[#801424] font-mono flex items-center gap-1.5">
+                <Target size={13} />
+                DEADLINE PACING INTELLIGENCE
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded-full text-[10px] font-black tracking-wide ${
+                  workItem.pacing.status === 'OVERDUE'
+                    ? 'bg-red-600 text-white'
+                    : workItem.pacing.status === 'BEHIND'
+                    ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                    : workItem.pacing.status === 'WORKLOAD_INCREASING' || workItem.pacing.status === 'AT_RISK'
+                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                    : workItem.pacing.status === 'AHEAD'
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                    : workItem.pacing.status === 'SCHEDULED'
+                    ? 'bg-slate-100 text-slate-700 border border-slate-200'
+                    : 'bg-teal-100 text-teal-800 border border-teal-200'
+                }`}
+              >
+                {workItem.pacing.status}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+              <div className="bg-white p-2 rounded-xl border border-slate-200">
+                <span className="text-[9px] uppercase font-bold text-slate-400 block">Target Qty</span>
+                <span className="text-sm font-black text-slate-900">
+                  {workItem.pacing.targetQuantity} <span className="text-[9px] text-slate-400">{workItem.quantity_unit || 'items'}</span>
+                </span>
+              </div>
+              <div className="bg-white p-2 rounded-xl border border-slate-200">
+                <span className="text-[9px] uppercase font-bold text-slate-400 block">Expected Now</span>
+                <span className="text-sm font-black text-slate-900">
+                  {workItem.pacing.expectedQuantity} <span className="text-[9px] text-slate-400">{workItem.quantity_unit || 'items'}</span>
+                </span>
+              </div>
+              <div className="bg-white p-2 rounded-xl border border-slate-200">
+                <span className="text-[9px] uppercase font-bold text-slate-400 block">Required/Day</span>
+                <span className="text-sm font-black text-rose-700">
+                  {workItem.pacing.requiredPerDay} <span className="text-[9px] text-slate-400">/day</span>
+                </span>
+              </div>
+              <div className="bg-white p-2 rounded-xl border border-slate-200">
+                <span className="text-[9px] uppercase font-bold text-slate-400 block">Days Left</span>
+                <span className="text-sm font-black text-slate-900">
+                  {workItem.pacing.remainingDays} <span className="text-[9px] text-slate-400">days</span>
+                </span>
+              </div>
+            </div>
+
+            {workItem.pacing.recommendedPaceText ? (
+              <p className="text-[11px] font-semibold text-slate-700 bg-white/80 rounded-xl p-2.5 border border-slate-200/60">
+                🎯 Recommended Pace: {workItem.pacing.recommendedPaceText}
+              </p>
+            ) : workItem.pacing.recommendedIntervalDays ? (
+              <p className="text-[11px] font-semibold text-slate-700 bg-white/80 rounded-xl p-2.5 border border-slate-200/60">
+                🎯 Recommended Pace: 1 {workItem.quantity_unit || 'item'} every {workItem.pacing.recommendedIntervalDays} days over {workItem.pacing.totalDays} total days.
+              </p>
+            ) : null}
+          </div>
+        )}
       </div>
 
       {/* Work Updates Section */}
@@ -610,18 +780,16 @@ export default function WorkItemDetails() {
 
         <div className="space-y-3">
           {updates.length === 0 ? (
-            <p className="text-xs text-slate-400 italic">No work updates logged yet.</p>
+            <div className="py-6 text-center text-xs text-slate-400 italic bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+              No work updates logged yet.
+            </div>
           ) : (
             updates.map((u) => (
-              <div key={u.id} className="p-4 border border-slate-100 rounded-xl bg-slate-50/50 space-y-1 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-900">
-                    {u.employee?.first_name} {u.employee?.last_name || ''}
-                  </span>
-                  <span className="text-slate-400">{new Date(u.created_at).toLocaleString()}</span>
-                </div>
-                <p className="text-slate-700 whitespace-pre-wrap">{u.update_text}</p>
-              </div>
+              <StructuredWorkUpdateCard
+                key={u.id}
+                update={u}
+                unit={workItem.quantity_unit || 'Items'}
+              />
             ))
           )}
         </div>
@@ -814,6 +982,31 @@ export default function WorkItemDetails() {
             </div>
 
             <form onSubmit={handleAddUpdate} className="space-y-3.5 text-xs">
+              {workItem.target_quantity && Number(workItem.target_quantity) > 0 && (
+                <div className="bg-rose-50/60 p-3.5 rounded-xl border border-[#801424]/20 space-y-1.5">
+                  <label className="block font-bold text-slate-900">
+                    Cumulative Completed {workItem.quantity_unit || 'Units'} (Total Target: {workItem.target_quantity}) *
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={cumulativeQuantity}
+                      onChange={(e) => setCumulativeQuantity(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-[#801424] bg-white font-bold text-slate-900"
+                      placeholder={`e.g. ${Math.min(Number(workItem.target_quantity), (Number(workItem.completed_quantity) || 0) + 1)}`}
+                    />
+                    <span className="text-xs font-bold text-slate-600 whitespace-nowrap font-mono">
+                      / {workItem.target_quantity} {workItem.quantity_unit || 'items'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    Enter the total completed count so far. When reaching {workItem.target_quantity}, this work item will automatically be marked as completed.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
                   What did you work on today? *

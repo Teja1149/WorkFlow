@@ -93,12 +93,19 @@ export async function updateProjectTargetHandler(
 ) {
   try {
     const orgId = req.profile?.organization_id
-    if (!orgId) {
-      return res.status(401).json({ error: 'Organization ID required.' })
+    const userId = req.userId
+
+    if (!orgId || !userId) {
+      return res.status(401).json({ error: 'Authentication required.' })
     }
 
     const targetId = String(req.params.targetId)
-    const updated = await updateProjectTarget(orgId, targetId, req.body)
+    const updated = await updateProjectTarget(
+      orgId,
+      targetId,
+      req.body,
+      userId,
+    )
     return res.json({ data: updated })
   } catch (err) {
     return res.status(500).json({

@@ -5,6 +5,7 @@ import {
   listWorkItems,
   getWorkItem,
   addWorkItem,
+  addWorkItemsBulk,
   editWorkItem,
   updateWorkItemStatus,
   removeWorkItem,
@@ -17,9 +18,17 @@ import {
   resolveWorkConcern,
   listWorkAssignmentHistoryController,
   listWorkActivity,
+  runDeadlineMonitorNow,
 } from './work-item.controller.js'
 
 const router = Router()
+
+router.post(
+  '/deadline-monitor/run',
+  requireAuth,
+  requireRoles('SUPER_ADMIN', 'ADMIN'),
+  runDeadlineMonitorNow,
+)
 
 router.get(
   '/:workItemId/assignment-history',
@@ -33,6 +42,13 @@ router.get(
   requireAuth,
   requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'EMPLOYEE'),
   listWorkItems,
+)
+
+router.post(
+  '/bulk',
+  requireAuth,
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER'),
+  addWorkItemsBulk,
 )
 
 router.post(
