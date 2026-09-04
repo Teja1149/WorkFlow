@@ -1,6 +1,12 @@
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { logActivity } from './work-activity.service.js'
-import { createNotification, notifyStakeholders } from '../notifications/notification.service.js'
+import {
+  createNotification,
+  notifyStakeholders,
+  getDirectManagerId,
+  getOrganizationStakeholderIds,
+} from '../notifications/notification.service.js'
+import { NotificationType } from '../notifications/notification.types.js'
 import { refreshWorkHealth } from '../work-execution/work-execution.service.js'
 
 export async function getConcerns(workItemId: string) {
@@ -76,24 +82,51 @@ export async function addConcern(
     `Reported a concern/blocker: ${concern.trim()}`,
   )
 
-  // Notify Manager / Creator
+  // Notify Manager / Creator / Assignee / Leadership
   try {
     const { data: item } = await supabaseAdmin
       .from('work_items')
-      .select('created_by, organization_id, title, project_id')
+      .select('created_by, assigned_to, organization_id, title, project_id')
       .eq('id', workItemId)
       .single()
 
-    if (item && item.created_by && item.created_by !== userId) {
-      await createNotification({
-        userId: item.created_by,
-        organizationId: item.organization_id,
-        type: 'CONCERN_REPORTED',
-        title: 'Open Concern',
-        message: `Concern reported on "${item.title}": ${concern.trim()}`,
-        workItemId: workItemId,
-        projectId: item.project_id,
-      })
+    if (item) {
+      const managerId = item.assigned_to
+        ? await getDirectManagerId(item.assigned_to, item.organization_id)
+        : null
+      const leadership = await getOrganizationStakeholderIds(
+        item.organization_id,
+        ['SUPER_ADMIN', 'ADMIN', 'MANAGER'],
+      )
+
+      const recipients = [
+        item.created_by,
+        item.assigned_to,
+        managerId,
+        ...leadership,
+      ].filter(
+        (id): id is string =>
+          Boolean(id) && id !== userId,
+      )
+
+      for (const recipientId of [...new Set(recipients)]) {
+        try {
+          await createNotification({
+            userId: recipientId,
+            organizationId: item.organization_id,
+            type: NotificationType.CONCERN_REPORTED,
+            title: 'Open Concern',
+            message: `Concern reported on "${item.title}": ${concern.trim()}`,
+            workItemId: workItemId,
+            projectId: item.project_id,
+          })
+        } catch (notifErr) {
+          console.error(
+            `Failed to notify ${recipientId} about concern:`,
+            notifErr,
+          )
+        }
+      }
     }
   } catch {
     // Ignore notification error
@@ -129,27 +162,51 @@ export async function resolveConcern(
       'Marked concern as resolved.',
     )
 
-    if (data.reported_by && data.reported_by !== resolvedBy) {
-      try {
-        const { data: item } = await supabaseAdmin
-          .from('work_items')
-          .select('organization_id')
-          .eq('id', data.work_item_id)
-          .single()
+    try {
+      const { data: item } = await supabaseAdmin
+        .from('work_items')
+        .select('organization_id, title, project_id, created_by, assigned_to')
+        .eq('id', data.work_item_id)
+        .single()
 
-        if (item) {
-          await createNotification({
-            userId: data.reported_by,
-            organizationId: item.organization_id,
-            type: 'CONCERN_RESOLVED',
-            title: 'Work concern resolved',
-            message: `Your concern on "${data.work_item_id}" has been resolved.`,
-            workItemId: data.work_item_id,
-          })
+      if (item) {
+        const managerId = item.assigned_to
+          ? await getDirectManagerId(item.assigned_to, item.organization_id)
+          : null
+        const leadership = await getOrganizationStakeholderIds(
+          item.organization_id,
+          ['SUPER_ADMIN', 'ADMIN', 'MANAGER'],
+        )
+
+        const recipients = [
+          data.reported_by,
+          item.created_by,
+          item.assigned_to,
+          managerId,
+          ...leadership,
+        ].filter(
+          (id): id is string =>
+            Boolean(id) && id !== resolvedBy,
+        )
+
+        for (const recipientId of [...new Set(recipients)]) {
+          try {
+            await createNotification({
+              userId: recipientId,
+              organizationId: item.organization_id,
+              type: NotificationType.CONCERN_RESOLVED,
+              title: 'Work concern resolved',
+              message: `Concern on "${item.title}" has been resolved.`,
+              workItemId: data.work_item_id,
+              projectId: item.project_id,
+            })
+          } catch (notificationError) {
+            console.error('Failed to notify concern resolution recipient:', notificationError)
+          }
         }
-      } catch (notificationError) {
-        console.error('Failed to notify concern reporter:', notificationError)
       }
+    } catch (notificationError) {
+      console.error('Failed to process concern resolution notification:', notificationError)
     }
   }
 
@@ -219,15 +276,31 @@ export async function reviewWorkConcern(
   }
 
   try {
+    const managerId = work.assigned_to
+      ? await getDirectManagerId(work.assigned_to, organizationId)
+      : null
+    const leadership = await getOrganizationStakeholderIds(
+      organizationId,
+      ['SUPER_ADMIN', 'ADMIN', 'MANAGER'],
+    )
+
+    const recipients = [
+      concern.reported_by,
+      work.created_by,
+      work.assigned_to,
+      managerId,
+      ...leadership,
+    ].filter((id): id is string => Boolean(id) && id !== reviewerId)
+
     await notifyStakeholders({
       organizationId,
       title: 'Concern Resolved',
       message: `"${work.title}" concern has been resolved.`,
-      type: 'CONCERN_RESOLVED',
+      type: NotificationType.CONCERN_RESOLVED,
       workItemId: work.id,
       projectId: work.project_id,
       authorUserId: reviewerId,
-      recipients: [concern.reported_by],
+      recipients,
     })
   } catch (notifErr) {
     console.error('Failed to notify concern resolution:', notifErr)

@@ -29,6 +29,7 @@ import MetricCard from '../components/ui/MetricCard'
 import HealthBadge from '../components/ui/HealthBadge'
 import DailyTargetCard from '../features/daily-targets/DailyTargetCard'
 import DailyTargetDrawer from '../features/daily-targets/DailyTargetDrawer'
+import DailyReportRequiredBanner from '../features/projects/components/DailyReportRequiredBanner'
 
 function healthClass(health: DailyWorkItem['health']) {
   switch (health) {
@@ -451,6 +452,14 @@ export default function MyDay() {
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
             {error}
           </div>
+        )}
+
+        {/* PROMINENT DAILY REPORT COMPLIANCE BANNER */}
+        {accessToken && (
+          <DailyReportRequiredBanner
+            accessToken={accessToken}
+            onReportSubmitted={load}
+          />
         )}
 
         {/* QUICK OVERVIEW */}

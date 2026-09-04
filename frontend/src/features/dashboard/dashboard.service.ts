@@ -119,9 +119,18 @@ export interface LiveOverviewData {
   timezone: string
   today: string
   summary: {
+    employees: number
+    totalEmployees?: number
+    activeEmployees?: number
+    managers?: number
+    employeesOnLeave?: number
     projects: number
+    totalProjects?: number
+    activeProjects: number
+    totalWork: number
     assigned: number
     active: number
+    inProgress?: number
     completedToday: number
     overdue: number
     carriedForward: number

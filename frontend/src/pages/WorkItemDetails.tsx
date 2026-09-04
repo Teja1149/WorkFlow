@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../features/auth/AuthContext'
 import {
-  getWorkItems,
+  getWorkItem,
   updateWorkItem,
   updateWorkItemStatus,
   getWorkComments,
@@ -97,8 +97,8 @@ export default function WorkItemDetails() {
     setLoading(true)
     setError('')
     try {
-      const [allItems, comList, upList, conList, wtList, histList, empList, workSettings] = await Promise.all([
-        getWorkItems(accessToken),
+      const [item, comList, upList, conList, wtList, histList, empList, workSettings] = await Promise.all([
+        getWorkItem(accessToken, workItemId),
         getWorkComments(accessToken, workItemId).catch(() => []),
         getWorkUpdates(accessToken, workItemId).catch(() => []),
         getWorkConcerns(accessToken, workItemId).catch(() => []),
@@ -113,21 +113,18 @@ export default function WorkItemDetails() {
       setEmployees(empList)
       setSettings(workSettings)
 
-      const found = allItems.find((w) => w.id === workItemId)
-      if (found) {
-        setWorkItem(found)
+      setWorkItem(item)
 
-        // Check if there is a daily target linked to this work item
-        if (found.assigned_to) {
-          try {
-            const targets = await getEmployeeDailyTargets(accessToken, found.assigned_to)
-            const linked = targets.find((t: any) => t.work_item_id === found.id)
-            if (linked) {
-              setLinkedDailyTarget(linked)
-            }
-          } catch {
-            // Ignore target load failure
+      // Check if there is a daily target linked to this work item
+      if (item.assigned_to) {
+        try {
+          const targets = await getEmployeeDailyTargets(accessToken, item.assigned_to)
+          const linked = targets.find((t: any) => t.work_item_id === item.id)
+          if (linked) {
+            setLinkedDailyTarget(linked)
           }
+        } catch {
+          // Ignore target load failure
         }
       }
       setComments(comList)
@@ -468,7 +465,6 @@ export default function WorkItemDetails() {
               >
                 <option value="TODO">To Do</option>
                 <option value="IN_PROGRESS">In Progress</option>
-                <option value="DEVELOPMENT">Development</option>
                 <option value="DONE">Completed</option>
                 <option value="BLOCKED">On Hold</option>
               </select>

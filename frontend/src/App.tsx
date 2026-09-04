@@ -10,6 +10,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Employees = lazy(() => import('./pages/Employees'))
 const Projects = lazy(() => import('./pages/Projects'))
 const ProjectDetails = lazy(() => import('./pages/ProjectDetails'))
+const ProjectBoard = lazy(() => import('./pages/ProjectBoard'))
 const WorkItems = lazy(() => import('./pages/WorkItems'))
 const WorkItemDetails = lazy(() => import('./pages/WorkItemDetails'))
 const Notifications = lazy(() => import('./pages/Notifications'))
@@ -69,10 +70,31 @@ function RoleRoute({ roles, children }: { roles: AppRole[]; children: React.Reac
   }
 
   if (profile && !roles.includes(profile.role)) {
-    return <Navigate to="/dashboard" replace />
+    if (profile.role === 'EMPLOYEE') {
+      return <Navigate to="/execution-board" replace />
+    }
+    return <Navigate to="/admin-workboard" replace />
   }
 
   return <>{children}</>
+}
+
+function WorkspaceRedirect() {
+  const { profile, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500">
+        Loading workspace...
+      </div>
+    )
+  }
+
+  const role = profile?.role
+  if (role === 'SUPER_ADMIN' || role === 'ADMIN' || role === 'MANAGER') {
+    return <Navigate to="/admin-workboard" replace />
+  }
+  return <Navigate to="/execution-board" replace />
 }
 
 class ErrorBoundary extends React.Component<
@@ -149,7 +171,11 @@ export default function App() {
 
             <Route
               path="/work-overview"
-              element={<Dashboard />}
+              element={
+                <RoleRoute roles={['SUPER_ADMIN', 'ADMIN', 'MANAGER']}>
+                  <Dashboard />
+                </RoleRoute>
+              }
             />
 
             <Route
@@ -222,6 +248,11 @@ export default function App() {
             />
 
             <Route
+              path="/projects/:projectId/board"
+              element={<ProjectBoard />}
+            />
+
+            <Route
               path="/work"
               element={<WorkItems />}
             />
@@ -267,12 +298,20 @@ export default function App() {
 
             <Route
               path="/reports"
-              element={<Reports />}
+              element={
+                <RoleRoute roles={['SUPER_ADMIN', 'ADMIN', 'MANAGER']}>
+                  <Reports />
+                </RoleRoute>
+              }
             />
 
             <Route
               path="/daily-results"
-              element={<DailyResultsReport />}
+              element={
+                <RoleRoute roles={['SUPER_ADMIN', 'ADMIN', 'MANAGER']}>
+                  <DailyResultsReport />
+                </RoleRoute>
+              }
             />
 
             <Route
@@ -314,17 +353,29 @@ export default function App() {
 
             <Route
               path="/team-today"
-              element={<TeamToday />}
+              element={
+                <RoleRoute roles={['SUPER_ADMIN', 'ADMIN', 'MANAGER']}>
+                  <TeamToday />
+                </RoleRoute>
+              }
             />
 
             <Route
               path="/employees/:employeeId/work"
-              element={<EmployeeWorkDetail />}
+              element={
+                <RoleRoute roles={['MANAGER']}>
+                  <EmployeeWorkDetail />
+                </RoleRoute>
+              }
             />
 
             <Route
               path="/employees/:employeeId/target-history"
-              element={<EmployeeTargetHistory />}
+              element={
+                <RoleRoute roles={['MANAGER']}>
+                  <EmployeeTargetHistory />
+                </RoleRoute>
+              }
             />
 
             <Route
@@ -334,12 +385,20 @@ export default function App() {
 
             <Route
               path="/company-command-center"
-              element={<CompanyCommandCenter />}
+              element={
+                <RoleRoute roles={['SUPER_ADMIN', 'ADMIN', 'MANAGER']}>
+                  <CompanyCommandCenter />
+                </RoleRoute>
+              }
             />
 
             <Route
               path="/company-operations"
-              element={<CompanyOperations />}
+              element={
+                <RoleRoute roles={['SUPER_ADMIN', 'ADMIN', 'MANAGER']}>
+                  <CompanyOperations />
+                </RoleRoute>
+              }
             />
 
             <Route
@@ -362,33 +421,49 @@ export default function App() {
 
             <Route
               path="/execution-board"
-              element={<DailyExecutionBoard />}
+              element={
+                <RoleRoute roles={['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'EMPLOYEE']}>
+                  <DailyExecutionBoard />
+                </RoleRoute>
+              }
             />
 
             <Route
               path="/employee-performance"
-              element={<EmployeePerformance />}
+              element={
+                <RoleRoute roles={['SUPER_ADMIN', 'ADMIN', 'MANAGER']}>
+                  <EmployeePerformance />
+                </RoleRoute>
+              }
             />
 
             <Route
               path="/organization-settings"
-              element={<OrganizationSettings />}
+              element={
+                <RoleRoute roles={['SUPER_ADMIN', 'ADMIN']}>
+                  <OrganizationSettings />
+                </RoleRoute>
+              }
             />
 
             <Route
               path="/settings"
-              element={<Settings />}
+              element={
+                <RoleRoute roles={['SUPER_ADMIN', 'ADMIN']}>
+                  <Settings />
+                </RoleRoute>
+              }
             />
 
             <Route
               path="/"
-              element={<Navigate to="/dashboard" replace />}
+              element={<WorkspaceRedirect />}
             />
           </Route>
 
           <Route
             path="*"
-            element={<Navigate to="/dashboard" replace />}
+            element={<WorkspaceRedirect />}
           />
         </Routes>
       </Suspense>

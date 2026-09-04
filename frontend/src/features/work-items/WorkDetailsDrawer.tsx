@@ -407,6 +407,7 @@ export default function WorkDetailsDrawer({
 
       if (linkedTarget) {
         await updateDailyTarget(accessToken, linkedTarget.id, {
+          employee_id: assignedTo || undefined,
           target_value: Number(targetValue) || 1,
           deadline_date: deadline || undefined,
         })
@@ -433,6 +434,7 @@ export default function WorkDetailsDrawer({
       })
       if (linkedTarget) {
         await updateDailyTarget(accessToken, linkedTarget.id, {
+          employee_id: newEmpId || undefined,
           deadline_date: deadline || undefined,
         })
       }
@@ -458,17 +460,25 @@ export default function WorkDetailsDrawer({
   // SEND BACK (Correction mechanism)
   async function handleSendBack() {
     if (!accessToken) return
+    const note = sendBackNote.trim()
+    if (!note) {
+      setError('A reason is required when sending work back.')
+      return
+    }
     setSubmitting(true)
     setError('')
     try {
-      const note = sendBackNote.trim() || 'Please revise output and resubmit.'
-      await updateWorkItemStatus(accessToken, work.id, 'IN_PROGRESS', note)
-      await addWorkUpdate(accessToken, work.id, {
-        update_text: `↩ Correction Requested: ${note}`,
-      })
+      await updateWorkItemStatus(
+        accessToken,
+        work.id,
+        'IN_PROGRESS',
+        note,
+        'SEND_BACK',
+      )
+
       setShowSendBackModal(false)
       setSendBackNote('')
-      setSuccessMsg('✓ Work sent back for revision.')
+      setSuccessMsg('✓ Work sent back for correction.')
       await onChanged()
     } catch (err: any) {
       setError(err?.message || 'Failed to send back.')

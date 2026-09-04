@@ -443,6 +443,7 @@ export async function getLiveOverviewController(
       data,
     })
   } catch (error: any) {
+    console.error('[getLiveOverviewController Error]:', error)
     return res.status(400).json({
       success: false,
       message: error.message,

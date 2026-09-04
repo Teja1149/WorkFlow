@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import type { UserProfile } from './auth.types'
 import { getProfile, login } from './auth.service'
+import { supabase } from '../../lib/supabase'
 
 const TOKEN_KEY = 'ewm_auth_token'
 
@@ -9,7 +10,7 @@ interface AuthContextType {
   token: string | null
   accessToken: string | null
   loading: boolean
-  loginUser: (email: string, password: string) => Promise<void>
+  loginUser: (email: string, password: string) => Promise<UserProfile>
   logout: () => void
 }
 
@@ -31,6 +32,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
+        try {
+          await supabase.realtime.setAuth(storedToken)
+        } catch (realtimeErr) {
+          console.warn('[Realtime setAuth warning]:', realtimeErr)
+        }
         const userProfile = await getProfile(storedToken)
         setToken(storedToken)
         setProfile(userProfile)
@@ -47,13 +53,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     restore()
   }, [])
 
-  async function loginUser(email: string, password: string) {
+  async function loginUser(email: string, password: string): Promise<UserProfile> {
     const result = await login(email, password)
 
     localStorage.setItem(TOKEN_KEY, result.session.access_token)
     localStorage.setItem('ewm_access_token', result.session.access_token)
+
+    try {
+      await supabase.realtime.setAuth(result.session.access_token)
+    } catch (realtimeErr) {
+      console.warn('[Realtime setAuth warning]:', realtimeErr)
+    }
+
     setToken(result.session.access_token)
     setProfile(result.user)
+    return result.user
   }
 
   function logout() {
@@ -61,6 +75,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('ewm_access_token')
     setToken(null)
     setProfile(null)
+    try {
+      void supabase.realtime.setAuth(null as any)
+    } catch {
+      // ignore
+    }
   }
 
   return (

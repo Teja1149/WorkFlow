@@ -271,6 +271,38 @@ export async function createDailyTarget(
     }
   }
 
+  if (input.sprint_id) {
+    const { data: sprint } =
+      await supabaseAdmin
+        .from('sprints')
+        .select('id, project_id, projects(methodology)')
+        .eq('id', input.sprint_id)
+        .maybeSingle()
+
+    if (!sprint) {
+      throw new Error('Sprint not found.')
+    }
+
+    if (
+      input.project_id &&
+      sprint.project_id !== input.project_id
+    ) {
+      throw new Error(
+        'Sprint does not belong to the selected project.',
+      )
+    }
+
+    const sprintMethodology =
+      (sprint as any).projects?.methodology ||
+      (Array.isArray((sprint as any).projects)
+        ? (sprint as any).projects[0]?.methodology
+        : null)
+
+    if (sprintMethodology === 'KANBAN') {
+      throw new Error('Kanban projects do not use sprints.')
+    }
+  }
+
   const { data, error } =
     await supabaseAdmin
       .from('daily_work_targets')
@@ -314,6 +346,24 @@ export async function createDailyTarget(
       .single()
 
   if (error) {
+    if (
+      error.code === '23505' ||
+      error.message?.includes('duplicate key') ||
+      error.message?.includes('idx_daily_targets_employee_title_date')
+    ) {
+      const { data: fallbackTarget } = await supabaseAdmin
+        .from('daily_work_targets')
+        .select('*')
+        .eq('organization_id', organizationId)
+        .eq('employee_id', input.employee_id)
+        .eq('deadline_date', input.deadline_date)
+        .eq('title', input.title.trim())
+        .maybeSingle()
+
+      if (fallbackTarget) {
+        return fallbackTarget
+      }
+    }
     throw new Error(error.message)
   }
 
@@ -417,6 +467,17 @@ export async function refreshDailyTargetHealth(
               projectId: target.project_id || undefined,
             })
 
+            const { data: managementUsers } = await supabaseAdmin
+              .from('profiles')
+              .select('id')
+              .eq('organization_id', organizationId)
+              .in('role', ['SUPER_ADMIN', 'ADMIN', 'MANAGER'])
+
+            const managementRecipients =
+              (managementUsers || [])
+                .map((user) => user.id)
+                .filter((id) => id !== target.employee_id)
+
             await notifyStakeholders({
               organizationId,
               title: 'Employee Target Overdue',
@@ -425,7 +486,7 @@ export async function refreshDailyTargetHealth(
               workItemId: target.work_item_id || undefined,
               projectId: target.project_id || undefined,
               authorUserId: target.employee_id,
-              recipients: [],
+              recipients: managementRecipients,
             })
           } else if (newHealth === 'CRITICAL') {
             // Notify Employee, Manager, Admin
@@ -439,6 +500,17 @@ export async function refreshDailyTargetHealth(
               projectId: target.project_id || undefined,
             })
 
+            const { data: managementUsers } = await supabaseAdmin
+              .from('profiles')
+              .select('id')
+              .eq('organization_id', organizationId)
+              .in('role', ['SUPER_ADMIN', 'ADMIN', 'MANAGER'])
+
+            const managementRecipients =
+              (managementUsers || [])
+                .map((user) => user.id)
+                .filter((id) => id !== target.employee_id)
+
             await notifyStakeholders({
               organizationId,
               title: 'Critical Daily Target Delay',
@@ -447,7 +519,7 @@ export async function refreshDailyTargetHealth(
               workItemId: target.work_item_id || undefined,
               projectId: target.project_id || undefined,
               authorUserId: target.employee_id,
-              recipients: [],
+              recipients: managementRecipients,
             })
           }
         } catch (notifErr) {
@@ -1516,6 +1588,7 @@ export async function updateDailyTarget(
   organizationId: string,
   targetId: string,
   input: {
+    employee_id?: string
     target_value?: number
     deadline_date?: string
     deadline_time?: string | null
@@ -1529,7 +1602,11 @@ export async function updateDailyTarget(
       .select(`
         id,
         organization_id,
-        status
+        status,
+        title,
+        deadline_date,
+        employee_id,
+        work_item_id
       `)
       .eq('id', targetId)
       .eq('organization_id', organizationId)
@@ -1554,6 +1631,55 @@ export async function updateDailyTarget(
 
   const updateData: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
+  }
+
+  if (input.employee_id !== undefined) {
+    if (!input.employee_id) {
+      throw new Error('Employee is required.')
+    }
+
+    const { data: employee, error: employeeError } =
+      await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .eq('id', input.employee_id)
+        .eq('organization_id', organizationId)
+        .maybeSingle()
+
+    if (employeeError) {
+      throw new Error(employeeError.message)
+    }
+
+    if (!employee) {
+      throw new Error('Employee does not belong to this organization.')
+    }
+
+    const finalTitle =
+      input.title !== undefined ? input.title.trim() : existing.title
+    const finalDate =
+      input.deadline_date !== undefined
+        ? input.deadline_date
+        : existing.deadline_date
+
+    if (finalTitle && finalDate) {
+      const { data: dupTarget } = await supabaseAdmin
+        .from('daily_work_targets')
+        .select('id')
+        .eq('organization_id', organizationId)
+        .eq('employee_id', input.employee_id)
+        .eq('title', finalTitle)
+        .eq('deadline_date', finalDate)
+        .neq('id', targetId)
+        .maybeSingle()
+
+      if (dupTarget) {
+        throw new Error(
+          'The target employee already has a daily target with this title on this date.',
+        )
+      }
+    }
+
+    updateData.employee_id = input.employee_id
   }
 
   if (input.title !== undefined) {

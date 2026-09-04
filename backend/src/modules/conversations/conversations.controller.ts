@@ -4,7 +4,62 @@ import {
   createConversation,
   getConversationMessages,
   sendConversationMessage,
+  getConversationPeople,
+  markConversationAsRead,
 } from './conversations.service.js'
+
+export async function markConversationRead(req: Request, res: Response) {
+  try {
+    const userId = req.userId
+    const conversationId = req.params.id as string
+
+    if (!userId || !conversationId) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' })
+    }
+
+    await markConversationAsRead(conversationId, userId)
+    return res.json({ success: true, message: 'Conversation marked as read.' })
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'Unable to mark conversation as read.',
+    })
+  }
+}
+
+export async function listConversationPeople(
+  req: Request,
+  res: Response,
+) {
+  try {
+    const organizationId = req.profile?.organization_id
+
+    if (!organizationId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Organization context is missing.',
+      })
+    }
+
+    const people = await getConversationPeople(
+      organizationId,
+      req.userId,
+    )
+
+    return res.json({
+      success: true,
+      data: people,
+    })
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to load conversation people.',
+    })
+  }
+}
 
 export async function listConversations(req: Request, res: Response) {
   try {

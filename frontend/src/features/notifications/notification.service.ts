@@ -50,6 +50,12 @@ export async function markNotificationRead(token: string, id: string) {
   })
 }
 
+export async function markNotificationUnread(token: string, id: string) {
+  return request(token, `/notifications/${id}/unread`, {
+    method: 'PATCH',
+  })
+}
+
 export async function markAllNotificationsRead(token: string) {
   return request(token, '/notifications/read-all', {
     method: 'PATCH',

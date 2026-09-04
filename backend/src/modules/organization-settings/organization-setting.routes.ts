@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { requireAuth } from '../../middleware/auth.js'
+import { requireRoles } from '../../middleware/roles.js'
 import {
   getOrganizationWorkSettingsController,
   updateOrganizationWorkSettingsController,
@@ -16,12 +17,14 @@ router.get(
 router.patch(
   '/work-settings',
   requireAuth,
+  requireRoles('SUPER_ADMIN', 'ADMIN'),
   updateOrganizationWorkSettingsController,
 )
 
 router.put(
   '/work-settings',
   requireAuth,
+  requireRoles('SUPER_ADMIN', 'ADMIN'),
   updateOrganizationWorkSettingsController,
 )
 

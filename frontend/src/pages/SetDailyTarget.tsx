@@ -149,6 +149,11 @@ export default function SetDailyTarget() {
     load()
   }, [accessToken])
 
+  // Filtered work items for selected project (Step 167)
+  const selectedProject = useMemo(() => {
+    return projects.find((p) => p.id === form.project_id)
+  }, [projects, form.project_id])
+
   // Load project child structures (modules, milestones, sprints)
   useEffect(() => {
     setModules([])
@@ -162,7 +167,9 @@ export default function SetDailyTarget() {
         const [modData, msData, sprintData] = await Promise.all([
           getProjectModules(accessToken!, form.project_id).catch(() => []),
           getProjectMilestones(accessToken!, form.project_id).catch(() => []),
-          getProjectSprints(accessToken!, form.project_id).catch(() => []),
+          selectedProject?.methodology === 'SCRUM'
+            ? getProjectSprints(accessToken!, form.project_id).catch(() => [])
+            : Promise.resolve([]),
         ])
 
         setModules(modData || [])
@@ -178,7 +185,7 @@ export default function SetDailyTarget() {
     }
 
     loadProjectData()
-  }, [form.project_id, accessToken])
+  }, [form.project_id, accessToken, selectedProject?.methodology])
 
   // Filtered work items for selected project (Step 167)
   const projectWorkItems = useMemo(() => {
@@ -558,20 +565,22 @@ export default function SetDailyTarget() {
                     </select>
                   </Field>
 
-                  <Field label="Sprint (Optional)">
-                    <select
-                      value={form.sprint_id}
-                      onChange={(e) => setForm((prev) => ({ ...prev, sprint_id: e.target.value }))}
-                      className="input"
-                    >
-                      <option value="">No sprint</option>
-                      {sprints.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
+                  {selectedProject?.methodology === 'SCRUM' && (
+                    <Field label="Sprint (Optional)">
+                      <select
+                        value={form.sprint_id}
+                        onChange={(e) => setForm((prev) => ({ ...prev, sprint_id: e.target.value }))}
+                        className="input"
+                      >
+                        <option value="">No sprint</option>
+                        {sprints.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
 
                   <Field label="Work Type (Optional)">
                     <select

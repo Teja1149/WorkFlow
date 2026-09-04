@@ -127,6 +127,11 @@ export default function WorkItems() {
     loadData()
   }, [accessToken])
 
+  const selectedProject = useMemo(
+    () => projects.find((p) => p.id === form.project_id),
+    [projects, form.project_id],
+  )
+
   // Step 2 — Load Modules, Milestones, and Sprints filtered by selected project
   useEffect(() => {
     if (!accessToken || !form.project_id) {
@@ -150,26 +155,38 @@ export default function WorkItems() {
       .then((ms) => setAvailableMilestones(Array.isArray(ms) ? ms : []))
       .catch(() => setAvailableMilestones([]))
 
-    getProjectSprints(accessToken, form.project_id)
-      .then((sp) => setAvailableSprints(Array.isArray(sp) ? sp : []))
-      .catch(() => setAvailableSprints([]))
-  }, [accessToken, form.project_id])
+    if (selectedProject?.methodology === 'SCRUM') {
+      getProjectSprints(accessToken, form.project_id)
+        .then((sp) => setAvailableSprints(Array.isArray(sp) ? sp : []))
+        .catch(() => setAvailableSprints([]))
+    } else {
+      setAvailableSprints([])
+      setForm((prev) => ({ ...prev, sprint_id: '' }))
+    }
+  }, [accessToken, form.project_id, selectedProject?.methodology])
 
   const isManagerOrAdmin =
     profile?.role === 'SUPER_ADMIN' ||
     profile?.role === 'ADMIN' ||
     profile?.role === 'MANAGER'
 
+  const visibleWorkItems = useMemo(() => {
+    if (profile?.role === 'EMPLOYEE' && profile?.id) {
+      return workItems.filter((item) => item.assigned_to === profile.id)
+    }
+    return workItems
+  }, [workItems, profile?.role, profile?.id])
+
   const uniqueModulesList = useMemo(() => {
     const map = new Map<string, string>()
-    workItems.forEach((item) => {
+    visibleWorkItems.forEach((item) => {
       const mod = item.project_modules || item.module
       if (mod?.id && mod?.name) {
         map.set(mod.id, mod.name)
       }
     })
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }))
-  }, [workItems])
+  }, [visibleWorkItems])
 
   const filteredWorkItems = useMemo(() => {
     const todayIso = new Date().toISOString().slice(0, 10)
@@ -177,7 +194,7 @@ export default function WorkItems() {
     const paramProject = searchParams.get('project')
     const paramHealth = searchParams.get('health')?.toUpperCase()
 
-    return workItems.filter((item) => {
+    return visibleWorkItems.filter((item) => {
       const matchesSearch =
         item.title.toLowerCase().includes(search.toLowerCase()) ||
         item.description?.toLowerCase().includes(search.toLowerCase()) ||
@@ -211,7 +228,10 @@ export default function WorkItems() {
         item.project_modules?.id === moduleFilter ||
         item.module?.id === moduleFilter
 
-      const matchesEmployee = !paramEmployee || item.assigned_to === paramEmployee
+      const matchesEmployee =
+        profile?.role === 'EMPLOYEE'
+          ? item.assigned_to === profile.id
+          : !paramEmployee || item.assigned_to === paramEmployee
       const matchesProject = !paramProject || item.project_id === paramProject
       const matchesHealth = !paramHealth || item.health === paramHealth
 
@@ -227,7 +247,9 @@ export default function WorkItems() {
       )
     })
   }, [
-    workItems,
+    visibleWorkItems,
+    profile?.role,
+    profile?.id,
     search,
     statusFilter,
     priorityFilter,
@@ -243,6 +265,12 @@ export default function WorkItems() {
     setError('')
 
     try {
+      if (selectedProject?.methodology === 'SCRUM' && !form.sprint_id) {
+        setError('A Sprint is required for Scrum project work items.')
+        setSaving(false)
+        return
+      }
+
       const createdWork = await createWorkItem(accessToken, {
         project_id: form.project_id,
         work_type_id: form.work_type_id || null,
@@ -259,8 +287,8 @@ export default function WorkItems() {
         story_points: form.story_points ? Number(form.story_points) : null,
       })
 
-      // Step 6 — Sprint assignment via sprint_work_items
-      if (form.sprint_id && createdWork?.id) {
+      // Step 6 — Sprint assignment via sprint_work_items (SCRUM only)
+      if (selectedProject?.methodology === 'SCRUM' && form.sprint_id && createdWork?.id) {
         await addWorkItemToSprint(accessToken, form.sprint_id, createdWork.id).catch(console.error)
       }
 
@@ -645,29 +673,32 @@ export default function WorkItems() {
                     </select>
                   </div>
 
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Sprint</label>
-                    <select
-                      value={form.sprint_id}
-                      disabled={!form.project_id}
-                      onChange={(e) =>
-                        setForm((prev) => ({
-                          ...prev,
-                          sprint_id: e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:border-blue-500 bg-white disabled:bg-slate-100"
-                    >
-                      <option value="">No Sprint</option>
-                      {availableSprints
-                        .filter((s) => s.project_id === form.project_id)
-                        .map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name}
-                          </option>
-                        ))}
-                    </select>
-                  </div>
+                  {selectedProject?.methodology === 'SCRUM' && (
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Sprint *</label>
+                      <select
+                        required
+                        value={form.sprint_id}
+                        disabled={!form.project_id}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            sprint_id: e.target.value,
+                          }))
+                        }
+                        className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:border-blue-500 bg-white disabled:bg-slate-100"
+                      >
+                        <option value="">Select Sprint *</option>
+                        {availableSprints
+                          .filter((s) => s.project_id === form.project_id)
+                          .map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
               </div>
 

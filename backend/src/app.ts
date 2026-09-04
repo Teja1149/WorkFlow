@@ -52,6 +52,7 @@ import companyOperationsRoutes from './modules/company-operations/company-operat
 import searchRoutes from './modules/search/search.routes.js'
 import dailyTargetRoutes from './modules/daily-targets/daily-target.routes.js'
 import projectTargetRoutes from './modules/project-targets/project-target.routes.js'
+import projectDailyReportRoutes from './modules/project-daily-reports/project-daily-report.routes.js'
 import { errorHandler } from './middleware/error-handler.js'
 
 app.use('/api/auth', authRoutes)
@@ -75,6 +76,8 @@ app.use('/api/company-operations', companyOperationsRoutes)
 app.use('/api', searchRoutes)
 app.use('/api/daily-targets', dailyTargetRoutes)
 app.use('/api/project-targets', projectTargetRoutes)
+app.use('/api/projects/:projectId/daily-reports', projectDailyReportRoutes)
+app.use('/api/daily-reports', projectDailyReportRoutes)
 
 app.use(errorHandler)
 

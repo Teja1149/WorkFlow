@@ -19,7 +19,7 @@ export interface UpdateSprintInput {
 export async function verifyProjectInOrg(projectId: string, organizationId: string) {
   const { data: project, error } = await supabaseAdmin
     .from('projects')
-    .select('id, organization_id')
+    .select('id, organization_id, methodology')
     .eq('id', projectId)
     .eq('organization_id', organizationId)
     .maybeSingle()
@@ -49,7 +49,8 @@ export async function verifySprintInOrg(sprintId: string, organizationId: string
         id,
         organization_id,
         name,
-        project_key
+        project_key,
+        methodology
       )
     `)
     .eq('id', sprintId)
@@ -81,7 +82,10 @@ export async function createSprint(
     throw new Error('Sprint end date cannot be before the start date.')
   }
 
-  await verifyProjectInOrg(projectId, organizationId)
+  const project = await verifyProjectInOrg(projectId, organizationId)
+  if (project.methodology !== 'SCRUM') {
+    throw new Error('Sprints are available only for Scrum projects.')
+  }
 
   const { data, error } = await supabaseAdmin
     .from('sprints')
@@ -254,7 +258,15 @@ export async function deleteSprint(organizationId: string, sprintId: string) {
 }
 
 export async function startSprint(organizationId: string, sprintId: string) {
-  const sprint = await verifySprintInOrg(sprintId, organizationId)
+  const sprint: any = await verifySprintInOrg(sprintId, organizationId)
+
+  const projectMethodology =
+    sprint.projects?.methodology ||
+    (Array.isArray(sprint.projects) ? sprint.projects[0]?.methodology : null)
+
+  if (projectMethodology !== 'SCRUM') {
+    throw new Error('Sprints are available only for Scrum projects.')
+  }
 
   if (sprint.status !== 'PLANNED') {
     throw new Error(
@@ -344,7 +356,7 @@ export async function cancelSprint(organizationId: string, sprintId: string) {
     sprint.status !== 'ACTIVE'
   ) {
     throw new Error(
-      `A ${sprint.status.toLowerCase()} sprint cannot be cancelled.`,
+      `Only planned or active sprints can be cancelled. Current status: ${sprint.status}.`,
     )
   }
 
@@ -368,7 +380,15 @@ export async function addWorkItemToSprint(
   sprintId: string,
   workItemId: string,
 ) {
-  const sprint = await verifySprintInOrg(sprintId, organizationId)
+  const sprint: any = await verifySprintInOrg(sprintId, organizationId)
+
+  const sprintMethodology =
+    sprint.projects?.methodology ||
+    (Array.isArray(sprint.projects) ? sprint.projects[0]?.methodology : null)
+
+  if (sprintMethodology !== 'SCRUM') {
+    throw new Error('Sprints are available only for Scrum projects.')
+  }
 
   if (
     sprint.status === 'COMPLETED' ||
@@ -381,7 +401,7 @@ export async function addWorkItemToSprint(
 
   const { data: workItem, error: workError } = await supabaseAdmin
     .from('work_items')
-    .select('id, project_id, organization_id')
+    .select('id, project_id, organization_id, projects:project_id(id, methodology)')
     .eq('id', workItemId)
     .eq('organization_id', organizationId)
     .maybeSingle()
@@ -390,6 +410,14 @@ export async function addWorkItemToSprint(
 
   if (!workItem) {
     throw new Error('Work item not found or does not belong to your organization.')
+  }
+
+  const workItemMethodology =
+    (workItem as any).projects?.methodology ||
+    (Array.isArray((workItem as any).projects) ? (workItem as any).projects[0]?.methodology : null)
+
+  if (workItemMethodology && workItemMethodology !== 'SCRUM') {
+    throw new Error('Sprints are available only for Scrum projects.')
   }
 
   if (workItem.project_id !== sprint.project_id) {

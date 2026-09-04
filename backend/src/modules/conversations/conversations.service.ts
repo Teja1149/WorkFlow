@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { createNotification } from '../notifications/notification.service.js'
+import { NotificationType } from '../notifications/notification.types.js'
 
 export async function getUserConversations(userId: string, organizationId: string) {
   // Get conversation IDs user is member of
@@ -23,6 +24,7 @@ export async function getUserConversations(userId: string, organizationId: strin
       *,
       members:conversation_members(
         user_id,
+        last_read_at,
         user:profiles!conversation_members_user_id_fkey(
           id,
           first_name,
@@ -43,6 +45,59 @@ export async function getUserConversations(userId: string, organizationId: strin
   return convs
 }
 
+export async function markConversationAsRead(
+  conversationId: string,
+  userId: string,
+) {
+  const { data, error } = await supabaseAdmin
+    .from('conversation_members')
+    .update({
+      last_read_at: new Date().toISOString(),
+    })
+    .eq('conversation_id', conversationId)
+    .eq('user_id', userId)
+    .select()
+
+  if (error) {
+    // If table column last_read_at is not available, fail gracefully
+    console.warn('Could not update last_read_at:', error.message)
+    return null
+  }
+
+  return data
+}
+
+export async function getConversationPeople(
+  organizationId: string,
+  excludeUserId?: string,
+) {
+  const query = supabaseAdmin
+    .from('profiles')
+    .select(`
+      id,
+      first_name,
+      last_name,
+      email,
+      role,
+      designation,
+      avatar_url,
+      status
+    `)
+    .eq('organization_id', organizationId)
+    .eq('status', 'ACTIVE')
+    .order('first_name', { ascending: true })
+
+  const { data, error } = await query
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  return (data || []).filter(
+    (person) => person.id !== excludeUserId,
+  )
+}
+
 export async function createConversation(
   userId: string,
   organizationId: string,
@@ -50,7 +105,114 @@ export async function createConversation(
   name: string | null,
   memberIds: string[],
 ) {
-  const allMembers = Array.from(new Set([userId, ...memberIds]))
+  const allMembers = Array.from(
+    new Set([userId, ...memberIds]),
+  )
+
+  if (type === 'DIRECT' && allMembers.length !== 2) {
+    throw new Error(
+      'A direct conversation must contain exactly two people.',
+    )
+  }
+
+  const { data: profiles, error: profileError } =
+    await supabaseAdmin
+      .from('profiles')
+      .select('id, organization_id, status')
+      .in('id', allMembers)
+
+  if (profileError) {
+    throw new Error(profileError.message)
+  }
+
+  if (
+    !profiles ||
+    profiles.length !== allMembers.length ||
+    profiles.some(
+      (profile) =>
+        profile.organization_id !== organizationId ||
+        profile.status !== 'ACTIVE',
+    )
+  ) {
+    throw new Error(
+      'All conversation members must be active users in your organization.',
+    )
+  }
+
+  if (type === 'DIRECT' && memberIds.length === 1) {
+    const targetUserId = memberIds[0]
+
+    const { data: myMemberships, error: myMembershipError } =
+      await supabaseAdmin
+        .from('conversation_members')
+        .select('conversation_id')
+        .eq('user_id', userId)
+
+    if (myMembershipError) {
+      throw new Error(myMembershipError.message)
+    }
+
+    const conversationIds =
+      (myMemberships || []).map((row) => row.conversation_id)
+
+    if (conversationIds.length > 0) {
+      const { data: existingMemberships, error: existingError } =
+        await supabaseAdmin
+          .from('conversation_members')
+          .select('conversation_id')
+          .eq('user_id', targetUserId)
+          .in('conversation_id', conversationIds)
+
+      if (existingError) {
+        throw new Error(existingError.message)
+      }
+
+      const existingIds =
+        (existingMemberships || []).map((row) => row.conversation_id)
+
+      if (existingIds.length > 0) {
+        const { data: existingDirect, error: directError } =
+          await supabaseAdmin
+            .from('conversations')
+            .select(`
+              *,
+              members:conversation_members(
+                user_id,
+                user:profiles!conversation_members_user_id_fkey(
+                  id,
+                  first_name,
+                  last_name,
+                  role,
+                  designation
+                )
+              )
+            `)
+            .in('id', existingIds)
+            .eq('organization_id', organizationId)
+            .eq('type', 'DIRECT')
+
+        if (directError) {
+          throw new Error(directError.message)
+        }
+
+        const match = (existingDirect || []).find((conversation) => {
+          const ids = (conversation.members || []).map(
+            (member: { user_id: string }) => member.user_id,
+          )
+
+          return (
+            ids.length === 2 &&
+            ids.includes(userId) &&
+            ids.includes(targetUserId)
+          )
+        })
+
+        if (match) {
+          return match
+        }
+      }
+    }
+  }
 
   const { data: conv, error: convErr } = await supabaseAdmin
     .from('conversations')
@@ -243,7 +405,7 @@ export async function sendConversationMessage(
           await createNotification({
             userId: m.user_id,
             organizationId: conv.organization_id,
-            type: 'MESSAGE_RECEIVED',
+            type: NotificationType.MESSAGE_RECEIVED,
             title: notifTitle,
             message: notifMessage,
           }).catch((err) => {

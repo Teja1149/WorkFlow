@@ -38,8 +38,23 @@ export function subscribeToWorkUpdates(
         schema: 'public',
         table: 'work_updates',
       },
-      () => {
-        onChange()
+      async (payload) => {
+        const workItemId = (payload.new as { work_item_id?: string })?.work_item_id
+
+        if (!workItemId) {
+          onChange()
+          return
+        }
+
+        const { data: workItem } = await supabase
+          .from('work_items')
+          .select('organization_id')
+          .eq('id', workItemId)
+          .maybeSingle()
+
+        if (workItem?.organization_id === organizationId) {
+          onChange()
+        }
       },
     )
     .subscribe()

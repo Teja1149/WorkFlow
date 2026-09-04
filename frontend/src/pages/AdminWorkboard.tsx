@@ -27,6 +27,7 @@ import {
 import {
   createDailyTarget,
   createDailyTargetWithWorkItem,
+  getEmployeeDailyTargets,
   getTeamDailyTargets,
 } from '../features/daily-targets/daily-target.service'
 import { getProjects, type Project } from '../features/projects/project.service'
@@ -227,46 +228,46 @@ export default function AdminWorkboard() {
     loadData()
   }, [accessToken])
 
-  // Fast 5-second polling interval for live updates
+  // 10-second safety fallback refresh
   useEffect(() => {
     if (!accessToken) return
+
     const interval = window.setInterval(() => {
       void loadData()
-    }, 5_000)
+    }, 10000)
+
     return () => window.clearInterval(interval)
   }, [accessToken])
 
   // Supabase Realtime Subscriptions for immediate reflection
   useEffect(() => {
-    if (!profile?.organization_id) return
+    if (!profile?.organization_id || !accessToken) return
 
-    const unsubscribeWork = subscribeToWorkItems(
+    const refresh = () => {
+      void loadData()
+    }
+
+    const unsubscribeWorkItems = subscribeToWorkItems(
       profile.organization_id,
-      () => {
-        void loadData()
-      },
+      refresh,
     )
 
-    const unsubscribeUpdates = subscribeToWorkUpdates(
+    const unsubscribeWorkUpdates = subscribeToWorkUpdates(
       profile.organization_id,
-      () => {
-        void loadData()
-      },
+      refresh,
     )
 
     const unsubscribeTargets = subscribeToDailyTargets(
       profile.organization_id,
-      () => {
-        void loadData()
-      },
+      refresh,
     )
 
     return () => {
-      unsubscribeWork()
-      unsubscribeUpdates()
+      unsubscribeWorkItems()
+      unsubscribeWorkUpdates()
       unsubscribeTargets()
     }
-  }, [profile?.organization_id])
+  }, [profile?.organization_id, accessToken])
 
   // Build and sort rows
   const rows = useMemo<EmployeeRow[]>(() => {
@@ -397,10 +398,10 @@ export default function AdminWorkboard() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-5">
           <div>
             <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight">
-              TEAM EXECUTION BOARD
+              COMPANY WORKBOARD
             </h1>
             <p className="mt-1 text-xs text-slate-500 font-medium">
-              {summary.employees} Team Members · {summary.active} Active Work · {summary.overdue} At Risk
+              Company-wide work, workload, targets, and execution status.
             </p>
           </div>
 
@@ -969,6 +970,8 @@ function UnifiedAssignWorkDrawer({
         const work = workItems.find((w) => w.id === selectedExistingWorkId)
         if (!work) throw new Error('Selected work item not found.')
 
+        const today = new Date().toISOString().slice(0, 10)
+
         if (work.assigned_to !== selectedEmployeeId) {
           await updateWorkItem(accessToken, selectedExistingWorkId, {
             assigned_to: selectedEmployeeId,
@@ -976,18 +979,32 @@ function UnifiedAssignWorkDrawer({
           })
         }
 
-        await createDailyTarget(accessToken, {
-          employee_id: selectedEmployeeId,
-          work_item_id: selectedExistingWorkId,
-          title: work.title,
-          target_value: Number(targetValue) || 1,
-          unit: targetUnit.trim() || 'tasks',
-          deadline_date: new Date().toISOString().slice(0, 10),
-          deadline_time: targetDeadlineTime || '17:00',
-          priority: (work.priority as any) || 'MEDIUM',
-        })
+        try {
+          await createDailyTarget(accessToken, {
+            employee_id: selectedEmployeeId,
+            work_item_id: selectedExistingWorkId,
+            title: work.title,
+            target_value: Number(targetValue) || 1,
+            unit: targetUnit.trim() || 'tasks',
+            deadline_date: today,
+            deadline_time: targetDeadlineTime || '17:00',
+            priority: (work.priority as any) || 'MEDIUM',
+          })
+        } catch (targetError) {
+          const message =
+            targetError instanceof Error ? targetError.message : ''
 
-        await onAssigned(`✓ Assigned "${work.title}" to ${fullName(selectedEmployee!)} with daily target`)
+          if (
+            !message.toLowerCase().includes('already has an active daily target') &&
+            !message.toLowerCase().includes('duplicate key')
+          ) {
+            throw targetError
+          }
+        }
+
+        await onAssigned(
+          `✓ Assigned "${work.title}" to ${fullName(selectedEmployee!)}`,
+        )
       }
     } catch (err) {
       setErrorMessage(

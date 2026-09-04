@@ -33,6 +33,7 @@ export async function addUpdate(
   workItemId: string,
   employeeId: string,
   updateText: string,
+  userRole?: string,
 ) {
   if (!updateText.trim()) {
     throw new Error('Update cannot be empty.')
@@ -56,9 +57,12 @@ export async function addUpdate(
     throw new Error('Work item not found.')
   }
 
-  if (work.assigned_to !== employeeId) {
+  const isAssignee = work.assigned_to === employeeId
+  const isManagement = ['MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole || '')
+
+  if (!isAssignee && !isManagement) {
     throw new Error(
-      'Only the assigned employee can submit this update.',
+      'Only the assigned employee or management can submit this update.',
     )
   }
 

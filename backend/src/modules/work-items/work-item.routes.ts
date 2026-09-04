@@ -3,6 +3,7 @@ import { requireAuth } from '../../middleware/auth.js'
 import { requireRoles } from '../../middleware/roles.js'
 import {
   listWorkItems,
+  getWorkItem,
   addWorkItem,
   editWorkItem,
   updateWorkItemStatus,
@@ -39,6 +40,13 @@ router.post(
   requireAuth,
   requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER'),
   addWorkItem,
+)
+
+router.get(
+  '/:id',
+  requireAuth,
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'EMPLOYEE'),
+  getWorkItem,
 )
 
 router.patch(

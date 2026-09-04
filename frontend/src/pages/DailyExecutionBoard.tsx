@@ -101,10 +101,7 @@ function getColumn(item: DailyWorkItem): BoardColumn {
     return 'CARRIED_FORWARD'
   }
 
-  if (
-    item.status === 'IN_PROGRESS' ||
-    item.status === 'DEVELOPMENT'
-  ) {
+  if (item.status === 'IN_PROGRESS') {
     return 'IN_PROGRESS'
   }
 
@@ -246,17 +243,12 @@ export default function DailyExecutionBoard() {
     <div className="min-h-full bg-slate-50 p-4 md:p-6 lg:p-8">
       <div className="mx-auto max-w-[1600px] space-y-6">
 
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between border-b border-slate-200 pb-5">
           <div>
-            <p className="text-sm text-slate-500">
-              Agile execution
-            </p>
-
-            <h1 className="mt-1 text-3xl font-bold text-slate-900">
-              Daily Execution Board
+            <h1 className="text-3xl font-bold text-slate-900 tracking-tight">
+              TEAM EXECUTION BOARD
             </h1>
-
-            <p className="mt-2 text-sm text-slate-500">
+            <p className="mt-1 text-sm text-slate-500">
               Work organized by urgency and execution state.
             </p>
           </div>

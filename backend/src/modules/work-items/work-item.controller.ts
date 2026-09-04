@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express'
 import {
   getWorkItems,
+  getWorkItemById,
   createWorkItem,
   updateWorkItem,
   deleteWorkItem,
@@ -29,7 +30,15 @@ export async function listWorkItems(req: Request, res: Response) {
       })
     }
 
-    const workItems = await getWorkItems(organizationId, userId, role)
+    const assigned_to = req.query.assigned_to ? String(req.query.assigned_to) : undefined
+    const project_id = req.query.project_id ? String(req.query.project_id) : undefined
+    const status = req.query.status ? String(req.query.status) : undefined
+
+    const workItems = await getWorkItems(organizationId, userId, role, {
+      assigned_to: role === 'EMPLOYEE' ? userId : assigned_to,
+      project_id,
+      status,
+    })
 
     return res.json({
       success: true,
@@ -42,6 +51,41 @@ export async function listWorkItems(req: Request, res: Response) {
         error instanceof Error
           ? error.message
           : 'Unable to load work items.',
+    })
+  }
+}
+
+export async function getWorkItem(req: Request, res: Response) {
+  try {
+    const organizationId = req.profile?.organization_id
+    const userId = req.userId
+    const role = req.profile?.role
+
+    if (!organizationId || !userId || !role) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required.',
+      })
+    }
+
+    const workItem = await getWorkItemById(
+      organizationId,
+      userId,
+      role,
+      req.params.id as string,
+    )
+
+    return res.json({
+      success: true,
+      data: workItem,
+    })
+  } catch (error) {
+    return res.status(404).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Work item not found.',
     })
   }
 }
@@ -130,7 +174,7 @@ export async function updateWorkItemStatus(req: Request, res: Response) {
       })
     }
 
-    const { status, notes } = req.body
+    const { status, notes, action } = req.body
     if (!status) {
       return res.status(400).json({
         success: false,
@@ -145,6 +189,7 @@ export async function updateWorkItemStatus(req: Request, res: Response) {
       req.params.id as string,
       status,
       notes,
+      action,
     )
 
     return res.json({
@@ -244,6 +289,7 @@ export async function addWorkUpdate(
       userId,
       req.params.id as string,
       req.body,
+      req.profile?.role,
     )
 
     return res.status(201).json({

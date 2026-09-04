@@ -11,7 +11,25 @@ import {
   Target,
   Trash2,
   UserPlus,
+  Info,
+  FileText,
+  CheckSquare,
+  Layers,
+  Flame,
+  LayoutDashboard,
+  MessageSquare,
+  Edit3,
+  Save,
+  Briefcase,
+  CheckCircle,
+  Clock,
 } from 'lucide-react'
+import {
+  getWorkItems,
+  createWorkItem,
+  updateWorkItem,
+  type WorkItem,
+} from '../features/work-items/work-item.service'
 import { useAuth } from '../features/auth/AuthContext'
 import {
   getProjects,
@@ -61,6 +79,7 @@ import {
   type ProjectTargetType,
 } from '../features/project-targets/project-target.service'
 import { CheckCircle2, Gauge, Zap, Sparkles, SlidersHorizontal, UserCheck } from 'lucide-react'
+import ProjectDailyReportsTab from '../features/projects/components/ProjectDailyReportsTab'
 
 export const PROJECT_STATUS_OPTIONS: { value: ProjectStatus; label: string; style: string }[] = [
   { value: 'TODO', label: 'ToDo', style: 'bg-slate-100 text-slate-700 border-slate-200' },
@@ -144,6 +163,95 @@ export default function ProjectDetails() {
   const [targetSaving, setTargetSaving] = useState(false)
   const [generatingDaily, setGeneratingDaily] = useState(false)
 
+  // Project Workspace Tabs
+  const [activeTab, setActiveTab] = useState<
+    | 'OVERVIEW'
+    | 'INFORMATION'
+    | 'MODULES'
+    | 'TASKS'
+    | 'TODO'
+    | 'MILESTONES'
+    | 'TARGETS'
+    | 'DAILY_REPORTS'
+    | 'UPDATES'
+    | 'ACTIVITY'
+    | 'SPRINTS'
+  >('OVERVIEW')
+
+  // Project To-Dos State
+  const [projectWorkItems, setProjectWorkItems] = useState<WorkItem[]>([])
+  const [todoTitle, setTodoTitle] = useState('')
+  const [todoAssignee, setTodoAssignee] = useState('')
+  const [todoAdding, setTodoAdding] = useState(false)
+  const [todoFilter, setTodoFilter] = useState<'ALL' | 'PENDING' | 'COMPLETED'>('ALL')
+
+  async function handleToggleTodo(item: WorkItem) {
+    if (!accessToken) return
+    const newStatus: WorkItem['status'] = item.status === 'DONE' ? 'TODO' : 'DONE'
+    try {
+      await updateWorkItem(accessToken, item.id, {
+        status: newStatus,
+        progress_percent: newStatus === 'DONE' ? 100 : 0,
+      })
+      setProjectWorkItems((prev) =>
+        prev.map((w) =>
+          w.id === item.id
+            ? {
+                ...w,
+                status: newStatus,
+                progress_percent: newStatus === 'DONE' ? 100 : 0,
+              }
+            : w,
+        ),
+      )
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to update to-do status.')
+    }
+  }
+
+  async function handleAddTodo(e: React.FormEvent) {
+    e.preventDefault()
+    if (!accessToken || !projectId || !todoTitle.trim()) return
+    setTodoAdding(true)
+    try {
+      const newItem = await createWorkItem(accessToken, {
+        project_id: projectId,
+        title: todoTitle.trim(),
+        priority: 'MEDIUM',
+        assigned_to: todoAssignee || profile?.id || null,
+      })
+      setProjectWorkItems((prev) => [newItem, ...prev])
+      setTodoTitle('')
+      setTodoAssignee('')
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to create to-do.')
+    } finally {
+      setTodoAdding(false)
+    }
+  }
+
+  // Project Workspace Information State
+  const [isEditingInfo, setIsEditingInfo] = useState(false)
+  const [infoDescription, setInfoDescription] = useState('')
+  const [savingInfo, setSavingInfo] = useState(false)
+
+  async function handleSaveProjectInfo(e: React.FormEvent) {
+    e.preventDefault()
+    if (!accessToken || !projectId || !project) return
+    setSavingInfo(true)
+    try {
+      const updated = await updateProject(accessToken, projectId, {
+        description: infoDescription.trim(),
+      })
+      setProject(updated)
+      setIsEditingInfo(false)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to save project information.')
+    } finally {
+      setSavingInfo(false)
+    }
+  }
+
   // Step 2 — Load project sprints
   async function loadProjectSprints() {
     if (!accessToken || !projectId) return
@@ -170,9 +278,12 @@ export default function ProjectDetails() {
   async function handleCreateSprint(
     event: React.FormEvent,
   ) {
-    event.preventDefault()
-
     if (!accessToken || !projectId) return
+
+    if (project?.methodology === 'KANBAN') {
+      setError('Kanban projects do not use sprints.')
+      return
+    }
 
     if (!sprintName.trim()) {
       setError('Sprint name is required.')
@@ -270,23 +381,26 @@ export default function ProjectDetails() {
     setLoading(true)
     setError('')
     try {
-      const [projList, memList, empList, dtList] = await Promise.all([
+      const [projList, memList, empList, dtList, workItemList] = await Promise.all([
         getProjects(accessToken).catch(() => []),
         getProjectMembers(accessToken, projectId).catch(() => []),
         getEmployees(accessToken).catch(() => []),
         getProjectDailyTargets(accessToken, projectId).catch(() => []),
+        getWorkItems(accessToken).catch(() => []),
       ])
 
       const safeProjects = Array.isArray(projList) ? projList : []
       const found = safeProjects.find((p) => p && p.id === projectId)
       if (found) {
         setProject(found)
+        setInfoDescription(found.description || '')
       } else {
         setError('Project not found.')
       }
       setMembers(Array.isArray(memList) ? memList : [])
       setEmployees(Array.isArray(empList) ? empList : [])
       setDailyTargets(Array.isArray(dtList) ? dtList : [])
+      setProjectWorkItems(Array.isArray(workItemList) ? workItemList.filter((w) => w.project_id === projectId) : [])
       await loadProjectModules()
 
       getProjectTargets(accessToken, projectId)
@@ -662,12 +776,29 @@ export default function ProjectDetails() {
               <span className="text-xs font-mono text-slate-800 font-bold bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
                 {project.project_key}
               </span>
+              <span
+                className={`text-[11px] font-black uppercase px-2.5 py-0.5 rounded-full border ${
+                  project.methodology === 'SCRUM'
+                    ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                }`}
+              >
+                {project.methodology}
+              </span>
             </div>
             <p className="text-xs text-slate-500 mt-1">{project.description || 'No description provided.'}</p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
+          <Link
+            to={`/projects/${projectId}/board`}
+            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 shadow-xs transition"
+          >
+            <FolderKanban className="h-4 w-4" />
+            Open Board &rarr;
+          </Link>
+
           {canManageTeam && (
             <Link
               to={`/projects/${projectId}/set-target`}
@@ -682,9 +813,11 @@ export default function ProjectDetails() {
             <span className="text-xs font-bold text-slate-500">Status:</span>
             <select
               value={project.status || 'PLANNING'}
-              disabled={updatingStatus}
+              disabled={updatingStatus || !canManageTeam}
               onChange={(e) => handleStatusChange(e.target.value as ProjectStatus)}
-              className={`px-3.5 py-1.5 rounded-full text-xs font-extrabold border outline-none cursor-pointer transition ${
+              className={`px-3.5 py-1.5 rounded-full text-xs font-extrabold border outline-none ${
+                canManageTeam ? 'cursor-pointer' : 'cursor-not-allowed opacity-90'
+              } transition ${
                 PROJECT_STATUS_OPTIONS.find((s) => s.value === project.status)?.style ||
                 'bg-emerald-50 text-emerald-700 border-emerald-200'
               }`}
@@ -699,15 +832,176 @@ export default function ProjectDetails() {
         </div>
       </div>
 
-      {/* Methodology & Team Info */}
+      {/* PROJECT WORKSPACE TAB BAR */}
+      <div className="flex items-center gap-1.5 border-b border-slate-200 overflow-x-auto pb-px bg-white px-3 py-2 rounded-2xl shadow-xs">
+        <button
+          type="button"
+          onClick={() => setActiveTab('OVERVIEW')}
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-extrabold rounded-xl transition whitespace-nowrap cursor-pointer ${
+            activeTab === 'OVERVIEW'
+              ? 'bg-[#801424] text-white shadow-2xs'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`}
+        >
+          <LayoutDashboard size={14} />
+          <span>Overview</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('INFORMATION')}
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-extrabold rounded-xl transition whitespace-nowrap cursor-pointer ${
+            activeTab === 'INFORMATION'
+              ? 'bg-[#801424] text-white shadow-2xs'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`}
+        >
+          <Info size={14} />
+          <span>Information & Scope</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('MODULES')}
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-extrabold rounded-xl transition whitespace-nowrap cursor-pointer ${
+            activeTab === 'MODULES'
+              ? 'bg-[#801424] text-white shadow-2xs'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`}
+        >
+          <Layers size={14} />
+          <span>Modules ({modules.filter((m) => m.is_active).length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('TASKS')}
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-extrabold rounded-xl transition whitespace-nowrap cursor-pointer ${
+            activeTab === 'TASKS'
+              ? 'bg-[#801424] text-white shadow-2xs'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`}
+        >
+          <Briefcase size={14} />
+          <span>Tasks</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('TODO')}
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-extrabold rounded-xl transition whitespace-nowrap cursor-pointer ${
+            activeTab === 'TODO'
+              ? 'bg-[#801424] text-white shadow-2xs'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`}
+        >
+          <CheckSquare size={14} />
+          <span>To-Do ({projectWorkItems.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('MILESTONES')}
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-extrabold rounded-xl transition whitespace-nowrap cursor-pointer ${
+            activeTab === 'MILESTONES'
+              ? 'bg-[#801424] text-white shadow-2xs'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`}
+        >
+          <Target size={14} />
+          <span>Milestones ({milestones.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('TARGETS')}
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-extrabold rounded-xl transition whitespace-nowrap cursor-pointer ${
+            activeTab === 'TARGETS'
+              ? 'bg-[#801424] text-white shadow-2xs'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`}
+        >
+          <Gauge size={14} />
+          <span>Targets</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('DAILY_REPORTS')}
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-extrabold rounded-xl transition whitespace-nowrap cursor-pointer ${
+            activeTab === 'DAILY_REPORTS'
+              ? 'bg-[#801424] text-white shadow-2xs'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`}
+        >
+          <FileText size={14} />
+          <span>Daily Reports</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('UPDATES')}
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-extrabold rounded-xl transition whitespace-nowrap cursor-pointer ${
+            activeTab === 'UPDATES'
+              ? 'bg-[#801424] text-white shadow-2xs'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`}
+        >
+          <MessageSquare size={14} />
+          <span>Updates</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('ACTIVITY')}
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-extrabold rounded-xl transition whitespace-nowrap cursor-pointer ${
+            activeTab === 'ACTIVITY'
+              ? 'bg-[#801424] text-white shadow-2xs'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`}
+        >
+          <Zap size={14} />
+          <span>Activity</span>
+        </button>
+
+        {project.methodology === 'SCRUM' && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('SPRINTS')}
+            className={`flex items-center gap-2 px-3.5 py-2 text-xs font-extrabold rounded-xl transition whitespace-nowrap cursor-pointer ${
+              activeTab === 'SPRINTS'
+                ? 'bg-[#801424] text-white shadow-2xs'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <Flame size={14} />
+            <span>Sprints ({sprints.length})</span>
+          </button>
+        )}
+      </div>
+
+      {/* TAB 1: OVERVIEW */}
+      {activeTab === 'OVERVIEW' && (
+        <div className="space-y-6">
+          {/* Methodology & Team Info */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-        <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs flex items-center gap-3">
-          <FolderKanban size={16} className="text-[#801424]" />
-          <div>
-            <span className="text-slate-400 font-medium">Methodology:</span>{' '}
-            <span className="font-bold text-slate-800">{project.methodology}</span>
+        {project.methodology === 'SCRUM' ? (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="font-bold text-slate-900">SCRUM</div>
+            <p className="mt-1 text-xs text-slate-600">
+              Work is organized into time-boxed sprints. Assign work items to a
+              sprint and track sprint progress toward the sprint goal.
+            </p>
           </div>
-        </div>
+        ) : (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="font-bold text-slate-900">KANBAN</div>
+            <p className="mt-1 text-xs text-slate-600">
+              Work flows continuously through the execution board without requiring
+              sprint planning.
+            </p>
+          </div>
+        )}
 
         <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -1399,19 +1693,146 @@ export default function ProjectDetails() {
           )}
         </div>
       </div>
+    </div>
+  )}
 
-      {/* Modules / Work Areas Section */}
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-4 border-b border-slate-100 p-6 md:flex-row md:items-center md:justify-between">
+  {/* TAB 2: INFORMATION */}
+  {activeTab === 'INFORMATION' && (
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-4">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">
-              Modules / Work Areas
+            <span className="text-xs font-bold uppercase tracking-wider text-[#801424] font-mono flex items-center gap-1.5">
+              <Info size={14} />
+              PROJECT WORKSPACE INFORMATION
+            </span>
+            <h2 className="text-xl font-extrabold text-slate-900 mt-1">
+              Project Scope, Notes & Guidelines
             </h2>
-
-            <p className="mt-1 text-sm text-slate-500">
-              Organize project work into modules and assign a work type.
+            <p className="text-xs text-slate-500 mt-0.5">
+              Centralized documentation, technical architecture, business requirements, and team instructions.
             </p>
           </div>
+
+          {canManageTeam && (
+            <button
+              type="button"
+              onClick={() => setIsEditingInfo(!isEditingInfo)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-700 shadow-2xs transition cursor-pointer"
+            >
+              <Edit3 size={14} className="text-[#801424]" />
+              <span>{isEditingInfo ? 'Cancel Editing' : 'Edit Information'}</span>
+            </button>
+          )}
+        </div>
+
+        {isEditingInfo ? (
+          <form onSubmit={handleSaveProjectInfo} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
+                Project Overview, Requirements & Technical Instructions
+              </label>
+              <textarea
+                rows={8}
+                value={infoDescription}
+                onChange={(e) => setInfoDescription(e.target.value)}
+                placeholder="Enter project objectives, architectural notes, key links, guidelines, and instructions for team members..."
+                className="w-full rounded-xl border border-slate-200 p-4 text-xs text-slate-800 outline-none focus:border-[#801424] font-mono leading-relaxed"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setInfoDescription(project.description || '')
+                  setIsEditingInfo(false)
+                }}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={savingInfo}
+                className="px-4 py-2 rounded-xl bg-[#801424] hover:bg-[#9f1239] text-white text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <Save size={14} />
+                <span>{savingInfo ? 'Saving...' : 'Save Changes'}</span>
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono block">
+                  Methodology & Framework
+                </span>
+                <p className="text-sm font-extrabold text-slate-900 mt-1">
+                  {project.methodology}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">
+                  {project.methodology === 'SCRUM'
+                    ? 'Sprint-based milestone delivery'
+                    : 'Continuous Kanban flow'}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono block">
+                  Assigned Team
+                </span>
+                <p className="text-sm font-extrabold text-slate-900 mt-1">
+                  {members.length} Member{members.length !== 1 ? 's' : ''}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">
+                  {members.map((m) => m.profiles?.first_name || 'Member').slice(0, 3).join(', ')}
+                  {members.length > 3 ? ` +${members.length - 3} more` : ''}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono block">
+                  Key Deliverables
+                </span>
+                <p className="text-sm font-extrabold text-slate-900 mt-1">
+                  {modules.filter((m) => m.is_active).length} Active Modules
+                </p>
+                <p className="text-xs text-slate-500 mt-1">
+                  {milestones.length} Major Milestones Tracked
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 font-mono flex items-center gap-1.5">
+                <FileText size={14} className="text-[#801424]" />
+                Project Description & Technical Brief
+              </h3>
+              <div className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap bg-slate-50/50 p-4 rounded-xl border border-slate-100 font-sans">
+                {project.description ||
+                  'No detailed documentation written yet. Click "Edit Information" above to add project objectives, architecture notes, and guidelines.'}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )}
+
+  {/* TAB 3: MODULES */}
+  {activeTab === 'MODULES' && (
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-col gap-4 border-b border-slate-100 p-6 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">
+            Modules / Work Areas
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Organize project work into modules and assign a work type.
+          </p>
+        </div>
 
           {canManageTeam && (
             <button
@@ -1594,9 +2015,11 @@ export default function ProjectDetails() {
           </div>
         )}
       </div>
+      )}
 
-      {/* Project Milestones Management Section */}
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      {/* TAB 5: MILESTONES */}
+      {activeTab === 'MILESTONES' && (
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 p-6">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">
@@ -1776,170 +2199,463 @@ export default function ProjectDetails() {
           )}
         </div>
       </div>
+      )}
 
-      {/* Step 4 — Sprints Management Section */}
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-100 p-6">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">
-              Sprints
+      {/* TAB 7: SPRINTS (SCRUM ONLY) */}
+      {activeTab === 'SPRINTS' && project?.methodology === 'SCRUM' && (
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-slate-100 p-6">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Sprints
+              </h2>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Plan and execute work in time-boxed sprint cycles.
+              </p>
+            </div>
+
+            {canManageTeam && (
+              <button
+                onClick={() => setShowSprintForm((value) => !value)}
+                className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer"
+              >
+                + Create Sprint
+              </button>
+            )}
+          </div>
+
+          {showSprintForm && canManageTeam && (
+            <form
+              onSubmit={handleCreateSprint}
+              className="border-b border-slate-100 bg-slate-50 p-6"
+            >
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Sprint Name
+                  </label>
+
+                  <input
+                    value={sprintName}
+                    onChange={(e) => setSprintName(e.target.value)}
+                    placeholder="Sprint 1"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Goal
+                  </label>
+
+                  <input
+                    value={sprintGoal}
+                    onChange={(e) => setSprintGoal(e.target.value)}
+                    placeholder="Complete payment integration"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Start Date
+                  </label>
+
+                  <input
+                    type="date"
+                    value={sprintStartDate}
+                    onChange={(e) => setSprintStartDate(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                    End Date
+                  </label>
+
+                  <input
+                    type="date"
+                    value={sprintEndDate}
+                    onChange={(e) => setSprintEndDate(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 flex gap-2">
+                <button
+                  type="submit"
+                  disabled={sprintSaving}
+                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 cursor-pointer"
+                >
+                  {sprintSaving ? 'Creating...' : 'Create Sprint'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowSprintForm(false)}
+                  className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+
+          <div className="divide-y divide-slate-100">
+            {sprints.length === 0 ? (
+              <div className="p-10 text-center">
+                <p className="font-medium text-slate-700">
+                  No sprints yet
+                </p>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  Create the first sprint for this project.
+                </p>
+              </div>
+            ) : (
+              sprints.map((sprint) => (
+                <div
+                  key={sprint.id}
+                  className="flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Link
+                        to={`/sprints/${sprint.id}`}
+                        className="font-semibold text-slate-900 hover:text-blue-600"
+                      >
+                        {sprint.name}
+                      </Link>
+
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
+                        {sprint.status}
+                      </span>
+                    </div>
+
+                    {sprint.goal && (
+                      <p className="mt-1 text-sm text-slate-500">
+                        {sprint.goal}
+                      </p>
+                    )}
+
+                    <p className="mt-2 text-xs text-slate-500">
+                      {sprint.start_date || 'No start date'}
+                      {' → '}
+                      {sprint.end_date || 'No end date'}
+                    </p>
+                  </div>
+
+                  <Link
+                    to={`/sprints/${sprint.id}`}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Open Sprint
+                  </Link>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: TASKS */}
+      {activeTab === 'TASKS' && (
+        <ProjectExecutionSection projectId={projectId!} />
+      )}
+
+      {/* TAB 5: TO-DO (RAPID PROJECT CHECKLIST) */}
+      {activeTab === 'TODO' && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-4">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-[#801424] font-mono flex items-center gap-1.5">
+                <CheckSquare size={14} />
+                PROJECT TO-DO CHECKLIST
+              </span>
+              <h2 className="text-xl font-extrabold text-slate-900 mt-1">
+                Project Action Items & To-Dos
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Quick checklist items for testing, reviews, documentation, and releases.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setTodoFilter('ALL')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  todoFilter === 'ALL'
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                All ({projectWorkItems.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setTodoFilter('PENDING')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  todoFilter === 'PENDING'
+                    ? 'bg-amber-600 text-white'
+                    : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                }`}
+              >
+                Pending ({projectWorkItems.filter((w) => w.status !== 'DONE').length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setTodoFilter('COMPLETED')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  todoFilter === 'COMPLETED'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                }`}
+              >
+                Completed ({projectWorkItems.filter((w) => w.status === 'DONE').length})
+              </button>
+            </div>
+          </div>
+
+          {/* Add To-Do Bar */}
+          <form onSubmit={handleAddTodo} className="flex flex-col sm:flex-row gap-3 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200">
+            <input
+              type="text"
+              value={todoTitle}
+              onChange={(e) => setTodoTitle(e.target.value)}
+              placeholder="e.g. Prepare API documentation, Client review, Complete testing..."
+              className="flex-1 px-3.5 py-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-900 outline-none focus:border-[#801424]"
+            />
+            <select
+              value={todoAssignee}
+              onChange={(e) => setTodoAssignee(e.target.value)}
+              className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 outline-none"
+            >
+              <option value="">Assignee (Optional)</option>
+              {employees.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.first_name} {emp.last_name || ''}
+                </option>
+              ))}
+            </select>
+            <button
+              type="submit"
+              disabled={todoAdding || !todoTitle.trim()}
+              className="px-4 py-2 bg-[#801424] hover:bg-[#9f1239] text-white text-xs font-bold rounded-lg transition disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+            >
+              <Plus size={14} />
+              <span>{todoAdding ? 'Adding...' : 'Add To-Do'}</span>
+            </button>
+          </form>
+
+          {/* To-Do Items List */}
+          <div className="divide-y divide-slate-100">
+            {projectWorkItems
+              .filter((item) => {
+                if (todoFilter === 'PENDING') return item.status !== 'DONE'
+                if (todoFilter === 'COMPLETED') return item.status === 'DONE'
+                return true
+              })
+              .map((item) => {
+                const isDone = item.status === 'DONE'
+                return (
+                  <div
+                    key={item.id}
+                    className="py-3 flex items-center justify-between gap-4 hover:bg-slate-50/50 px-2 rounded-lg transition group"
+                  >
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleTodo(item)}
+                        className={`w-5 h-5 rounded border flex items-center justify-center transition cursor-pointer shrink-0 ${
+                          isDone
+                            ? 'bg-emerald-600 border-emerald-600 text-white'
+                            : 'border-slate-300 hover:border-slate-400 bg-white'
+                        }`}
+                      >
+                        {isDone && <CheckCircle2 size={13} />}
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <span
+                          className={`text-xs font-semibold ${
+                            isDone
+                              ? 'line-through text-slate-400'
+                              : 'text-slate-800'
+                          }`}
+                        >
+                          {item.title}
+                        </span>
+                        {item.description && (
+                          <p className="text-[11px] text-slate-400 truncate">
+                            {item.description}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 shrink-0">
+                      {item.assigned_to && (
+                        <span className="text-[11px] text-slate-500 font-mono">
+                          {employees.find((e) => e.id === item.assigned_to)?.first_name || 'Assigned'}
+                        </span>
+                      )}
+                      <span
+                        className={`text-[10px] font-bold font-mono px-2 py-0.5 rounded uppercase ${
+                          isDone
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : item.status === 'IN_PROGRESS'
+                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                            : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
+                        {item.status}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+            {projectWorkItems.length === 0 && (
+              <div className="py-8 text-center text-xs text-slate-400">
+                No to-do items created yet. Add one above!
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 7: TARGETS (PROJECT TARGET ENGINE) */}
+      {activeTab === 'TARGETS' && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-4">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-[#801424] font-mono flex items-center gap-1.5">
+                <Gauge size={14} />
+                PROJECT TARGET ENGINE
+              </span>
+              <h2 className="text-xl font-extrabold text-slate-900 mt-1">
+                Deliverables, Velocity & Quotas
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Commitment tracking, milestones, and daily automated target distributions.
+              </p>
+            </div>
+
+            {canManageTeam && (
+              <button
+                type="button"
+                onClick={() => setShowTargetModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-[#801424] px-4 py-2 text-xs font-bold text-white hover:bg-[#9f1239] shadow-2xs transition cursor-pointer"
+              >
+                <Target size={14} />
+                <span>+ Configure Targets</span>
+              </button>
+            )}
+          </div>
+
+          {targetSummary ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">{targetSummary.name}</h3>
+                  <span className="text-xs text-slate-500 font-mono">
+                    Deadline: {targetSummary.deadline_date || 'No deadline'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold text-slate-700 font-mono">
+                    {targetSummary.actual_value || 0} / {targetSummary.target_value} {targetSummary.unit}
+                  </span>
+                  <HealthBadge health={targetSummary.health || 'GREEN'} />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs font-bold">
+                  <span className="text-slate-500">Progress</span>
+                  <span className="text-slate-900 font-mono">
+                    {targetSummary.achievement || 0}%
+                  </span>
+                </div>
+                <div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-linear-to-r from-emerald-500 to-teal-500 rounded-full transition-all duration-500"
+                    style={{ width: `${Math.min(100, targetSummary.achievement || 0)}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="py-8 text-center text-slate-400 text-xs italic">
+              No project target summary configured yet. Click "+ Configure Targets" to set quotas.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 8: DAILY REPORTS */}
+      {activeTab === 'DAILY_REPORTS' && (
+        <ProjectDailyReportsTab
+          projectId={projectId!}
+          projectName={project.name}
+          accessToken={accessToken!}
+          currentUserId={profile?.id}
+          canManageTeam={canManageTeam}
+        />
+      )}
+
+      {/* TAB 9: UPDATES */}
+      {activeTab === 'UPDATES' && (
+        <ProjectDailyUpdatesSection projectId={projectId!} />
+      )}
+
+      {/* TAB 9: ACTIVITY */}
+      {activeTab === 'ACTIVITY' && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-6">
+          <div className="border-b border-slate-100 pb-4">
+            <span className="text-xs font-bold uppercase tracking-wider text-[#801424] font-mono flex items-center gap-1.5">
+              <Zap size={14} />
+              PROJECT LIVE ACTIVITY
+            </span>
+            <h2 className="text-xl font-extrabold text-slate-900 mt-1">
+              Audit Feed & Work Transitions
             </h2>
-
-            <p className="mt-1 text-sm text-slate-500">
-              Plan and execute work in time-boxed sprint cycles.
+            <p className="text-xs text-slate-500 mt-0.5">
+              Live updates and task transitions performed by team members on this project.
             </p>
           </div>
 
-          {canManageTeam && (
-            <button
-              onClick={() => setShowSprintForm((value) => !value)}
-              className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer"
-            >
-              + Create Sprint
-            </button>
-          )}
-        </div>
-
-        {showSprintForm && canManageTeam && (
-          <form
-            onSubmit={handleCreateSprint}
-            className="border-b border-slate-100 bg-slate-50 p-6"
-          >
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                  Sprint Name
-                </label>
-
-                <input
-                  value={sprintName}
-                  onChange={(e) => setSprintName(e.target.value)}
-                  placeholder="Sprint 1"
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                  Goal
-                </label>
-
-                <input
-                  value={sprintGoal}
-                  onChange={(e) => setSprintGoal(e.target.value)}
-                  placeholder="Complete payment integration"
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                  Start Date
-                </label>
-
-                <input
-                  type="date"
-                  value={sprintStartDate}
-                  onChange={(e) => setSprintStartDate(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                  End Date
-                </label>
-
-                <input
-                  type="date"
-                  value={sprintEndDate}
-                  onChange={(e) => setSprintEndDate(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-                />
-              </div>
-            </div>
-
-            <div className="mt-4 flex gap-2">
-              <button
-                type="submit"
-                disabled={sprintSaving}
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 cursor-pointer"
-              >
-                {sprintSaving ? 'Creating...' : 'Create Sprint'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowSprintForm(false)}
-                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 cursor-pointer"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        )}
-
-        <div className="divide-y divide-slate-100">
-          {sprints.length === 0 ? (
-            <div className="p-10 text-center">
-              <p className="font-medium text-slate-700">
-                No sprints yet
-              </p>
-
-              <p className="mt-1 text-sm text-slate-500">
-                Create the first sprint for this project.
-              </p>
-            </div>
-          ) : (
-            sprints.map((sprint) => (
-              <div
-                key={sprint.id}
-                className="flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
-              >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Link
-                      to={`/sprints/${sprint.id}`}
-                      className="font-semibold text-slate-900 hover:text-blue-600"
-                    >
-                      {sprint.name}
-                    </Link>
-
-                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
-                      {sprint.status}
+          <div className="divide-y divide-slate-100">
+            {projectWorkItems.map((item) => (
+              <div key={item.id} className="py-3 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2.5">
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${
+                      item.status === 'DONE' ? 'bg-emerald-500' : 'bg-blue-500'
+                    }`}
+                  />
+                  <div>
+                    <span className="font-bold text-slate-900">{item.title}</span>
+                    <span className="text-slate-400 ml-2 font-mono text-[11px]">
+                      Status: {item.status}
                     </span>
                   </div>
-
-                  {sprint.goal && (
-                    <p className="mt-1 text-sm text-slate-500">
-                      {sprint.goal}
-                    </p>
-                  )}
-
-                  <p className="mt-2 text-xs text-slate-500">
-                    {sprint.start_date || 'No start date'}
-                    {' → '}
-                    {sprint.end_date || 'No end date'}
-                  </p>
                 </div>
-
-                <Link
-                  to={`/sprints/${sprint.id}`}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Open Sprint
-                </Link>
+                <span className="font-mono text-[11px] text-slate-400">
+                  {item.deadline ? `Due ${item.deadline}` : 'Active'}
+                </span>
               </div>
-            ))
-          )}
+            ))}
+            {projectWorkItems.length === 0 && (
+              <div className="py-8 text-center text-xs text-slate-400">
+                No activity recorded yet for this project.
+              </div>
+            )}
+          </div>
         </div>
-      </div>
-
-      {/* Project Real-Time Execution Metrics & Work Breakdown */}
-      <ProjectExecutionSection projectId={projectId!} />
-
-      {/* Structured Project Daily Updates */}
-      <ProjectDailyUpdatesSection projectId={projectId!} />
+      )}
     </div>
   )
 }

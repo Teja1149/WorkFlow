@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { Search, Send, User, Hash, MessageSquare, AlertCircle, Plus, X, Check } from 'lucide-react'
 import { useAuth } from '../features/auth/AuthContext'
-import { getEmployees } from '../features/employees/employee.service'
 import {
   getConversations,
   createConversation,
   getMessages,
   sendMessage,
+  getConversationPeople,
+  markConversationRead,
   type Conversation,
   type ConversationMessage,
 } from '../features/work-activity/conversation.service'
@@ -39,15 +40,15 @@ export default function Conversations() {
     setLoading(true)
     setError('')
     try {
-      const [convList, empList] = await Promise.all([
+      const [convList, peopleList] = await Promise.all([
         getConversations(accessToken).catch(() => []),
-        getEmployees(accessToken).catch(() => []),
+        getConversationPeople(accessToken).catch(() => []),
       ])
 
       setConversations(convList)
-      setEmployees(empList)
+      setEmployees(peopleList)
 
-      if (convList.length > 0) {
+      if (convList.length > 0 && !activeConv) {
         setActiveConv(convList[0])
       }
     } catch (err) {
@@ -69,6 +70,21 @@ export default function Conversations() {
       try {
         const msgs = await getMessages(accessToken!, activeConv!.id)
         setMessages(msgs)
+        void markConversationRead(accessToken!, activeConv!.id)
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === activeConv!.id
+              ? {
+                  ...c,
+                  members: c.members?.map((m) =>
+                    m.user_id === profile?.id
+                      ? { ...m, last_read_at: new Date().toISOString() }
+                      : m,
+                  ),
+                }
+              : c,
+          ),
+        )
       } catch {
         setMessages([])
       }
@@ -91,6 +107,7 @@ export default function Conversations() {
           const newMsg = payload.new as ConversationMessage
           if (newMsg.sender_id !== profile?.id) {
             playNotificationSound()
+            void markConversationRead(accessToken!, activeConv!.id)
           }
           // Fetch sender details or find from employees
           const senderObj = employees.find((e) => e.id === newMsg.sender_id) || (newMsg.sender_id === profile?.id ? profile : undefined)
@@ -171,37 +188,37 @@ export default function Conversations() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="h-[calc(100vh-6.5rem)] flex flex-col w-full min-w-0 space-y-4">
+      <div className="flex items-center justify-between shrink-0">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900">Conversations</h1>
-          <p className="text-slate-500 mt-1">
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Conversations</h1>
+          <p className="text-xs text-slate-500 mt-0.5">
             Realtime direct messaging and team collaboration.
           </p>
         </div>
 
         <button
           onClick={() => setModalOpen(true)}
-          className="flex items-center gap-2 bg-[#801424] hover:bg-[#9f1239] text-white px-4 py-2.5 rounded-xl font-bold shadow-xs transition cursor-pointer"
+          className="flex items-center gap-2 bg-[#801424] hover:bg-[#9f1239] text-white px-4 py-2 rounded-xl text-xs font-bold shadow-xs transition cursor-pointer"
         >
-          <Plus size={18} />
-          New Conversation
+          <Plus size={16} />
+          <span>New Conversation</span>
         </button>
       </div>
 
       {error && (
-        <div className="p-4 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-3">
-          <AlertCircle size={20} />
+        <div className="p-3 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-3 text-xs shrink-0">
+          <AlertCircle size={16} />
           <span>{error}</span>
         </div>
       )}
 
-      <div className="bg-white border border-slate-200/80 rounded-2xl shadow-xs overflow-hidden grid grid-cols-1 md:grid-cols-12 min-h-150">
+      <div className="flex-1 flex w-full bg-white border border-slate-200/80 rounded-2xl shadow-xs overflow-hidden min-h-0">
         {/* Left Conversations List */}
-        <div className="md:col-span-4 border-r border-slate-200/80 flex flex-col bg-slate-50/50">
-          <div className="p-4 border-b border-slate-200/80 bg-white">
+        <div className="w-72 sm:w-80 md:w-96 border-r border-slate-200/80 flex flex-col bg-slate-50/50 shrink-0 min-h-0">
+          <div className="p-3.5 border-b border-slate-200/80 bg-white shrink-0">
             <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -211,7 +228,7 @@ export default function Conversations() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+          <div className="flex-1 overflow-y-auto divide-y divide-slate-100 min-h-0">
             {loading ? (
               <div className="p-6 text-center text-xs text-slate-400">Loading conversations...</div>
             ) : filteredConversations.length === 0 ? (
@@ -220,29 +237,41 @@ export default function Conversations() {
               filteredConversations.map((c) => {
                 const isActive = activeConv?.id === c.id
                 const title = getConversationTitle(c)
+                const myMember = c.members?.find((m) => m.user_id === profile?.id)
+                const isUnread = !isActive && Boolean(
+                  c.updated_at && (!myMember?.last_read_at || new Date(c.updated_at).getTime() > new Date(myMember.last_read_at).getTime())
+                )
 
                 return (
                   <div
                     key={c.id}
                     onClick={() => setActiveConv(c)}
-                    className={`p-4 transition cursor-pointer flex items-center gap-3 ${
+                    className={`p-3.5 transition cursor-pointer flex items-center justify-between gap-3 ${
                       isActive ? 'bg-white shadow-2xs border-l-4 border-l-slate-900' : 'hover:bg-slate-100/60'
                     }`}
                   >
-                    <div
-                      className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
-                        c.type === 'TEAM' ? 'bg-slate-100 text-slate-800' : 'bg-slate-100 text-slate-700'
-                      }`}
-                    >
-                      {c.type === 'TEAM' ? <Hash size={17} /> : <User size={17} />}
-                    </div>
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <div
+                        className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
+                          c.type === 'TEAM' ? 'bg-slate-100 text-slate-800' : 'bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        {c.type === 'TEAM' ? <Hash size={17} /> : <User size={17} />}
+                      </div>
 
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold text-xs text-slate-900 truncate">{title}</div>
-                      <div className="text-[11px] text-slate-400 truncate mt-0.5">
-                        {c.type === 'TEAM' ? `${c.members?.length || 0} members` : 'Direct Message'}
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-xs text-slate-900 truncate">{title}</div>
+                        <div className="text-[11px] text-slate-400 truncate mt-0.5">
+                          {c.type === 'TEAM' ? `${c.members?.length || 0} members` : 'Direct Message'}
+                        </div>
                       </div>
                     </div>
+
+                    {isUnread && (
+                      <span className="min-w-5 h-5 px-1.5 rounded-full bg-[#801424] text-white text-[10px] font-bold flex items-center justify-center shrink-0 shadow-xs">
+                        •
+                      </span>
+                    )}
                   </div>
                 )
               })
@@ -251,7 +280,7 @@ export default function Conversations() {
         </div>
 
         {/* Right Active Chat Feed */}
-        <div className="md:col-span-8 flex flex-col bg-white">
+        <div className="flex-1 flex flex-col bg-white min-w-0 min-h-0">
           {activeConv ? (
             <>
               {/* Active Header */}
@@ -399,7 +428,7 @@ export default function Conversations() {
 
               <div>
                 <label className="block font-medium text-slate-700 mb-1">
-                  {convType === 'DIRECT' ? 'Select Employee' : 'Select Team Members'}
+                  {convType === 'DIRECT' ? 'Select Member' : 'Select Team Members'}
                 </label>
                 <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
                   {employees

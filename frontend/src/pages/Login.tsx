@@ -18,8 +18,13 @@ export default function Login() {
     setSubmitting(true)
 
     try {
-      await loginUser(email, password)
-      navigate('/dashboard')
+      const user = await loginUser(email, password)
+      const role = user?.role
+      if (role === 'SUPER_ADMIN' || role === 'ADMIN' || role === 'MANAGER') {
+        navigate('/admin-workboard', { replace: true })
+      } else {
+        navigate('/execution-board', { replace: true })
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed.')
     } finally {

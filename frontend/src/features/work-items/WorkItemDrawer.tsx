@@ -143,22 +143,18 @@ export default function WorkItemDrawer({
   // Manager Action: Send Back
   async function handleSendBack() {
     if (!accessToken || !workItem) return
+    const notes = reviewNote.trim()
+    if (!notes) {
+      setError('A reason is required when sending work back.')
+      return
+    }
     setSubmitting(true)
     setError('')
     try {
-      const notes = reviewNote.trim() || undefined
-      await handleStatusTransition('IN_PROGRESS', notes)
-      if (notes) {
-        try {
-          await addWorkUpdate(accessToken, workItem.id, {
-            update_text: `Manager note: ${notes}`,
-          })
-        } catch {
-          // ignore
-        }
-      }
+      await updateWorkItemStatus(accessToken, workItem.id, 'IN_PROGRESS', notes, 'SEND_BACK')
       setShowSendBackModal(false)
       setReviewNote('')
+      await onUpdated()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to send back.')
     } finally {

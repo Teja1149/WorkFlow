@@ -158,7 +158,7 @@ export async function createProject(
     if (
       managerError ||
       !manager ||
-      (manager.role !== 'MANAGER' && manager.role !== 'SUPER_ADMIN') ||
+      !['MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(manager.role) ||
       manager.organization_id !== organizationId
     ) {
       throw new Error('Selected manager is invalid.')

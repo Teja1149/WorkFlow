@@ -131,6 +131,7 @@ export async function updateDailyTarget(
   token: string,
   targetId: string,
   input: {
+    employee_id?: string
     title?: string
     target_value?: number
     deadline_date?: string

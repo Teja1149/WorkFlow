@@ -15,6 +15,7 @@ type Project = {
   id: string
   name: string
   project_key: string
+  methodology?: 'SCRUM' | 'KANBAN'
 }
 
 const statusStyles: Record<SprintStatus, string> = {
@@ -33,6 +34,11 @@ export default function Sprints() {
   const [selectedProject, setSelectedProject] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  const selectedProjectInfo = useMemo(
+    () => projects.find((p) => p.id === selectedProject),
+    [projects, selectedProject],
+  )
 
   const [showCreate, setShowCreate] = useState(false)
 
@@ -94,6 +100,11 @@ export default function Sprints() {
   async function loadSprints() {
     if (!accessToken || !selectedProject) return
 
+    if (selectedProjectInfo?.methodology === 'KANBAN') {
+      setSprints([])
+      return
+    }
+
     try {
       setLoading(true)
       setError('')
@@ -117,17 +128,17 @@ export default function Sprints() {
 
   useEffect(() => {
     loadSprints()
-  }, [accessToken, selectedProject])
-
-  const selectedProjectInfo = useMemo(
-    () => projects.find((p) => p.id === selectedProject),
-    [projects, selectedProject],
-  )
+  }, [accessToken, selectedProject, selectedProjectInfo?.methodology])
 
   async function handleCreateSprint(e: React.FormEvent) {
     e.preventDefault()
 
     if (!accessToken || !selectedProject) return
+
+    if (selectedProjectInfo?.methodology === 'KANBAN') {
+      setError('Kanban projects do not use sprints.')
+      return
+    }
 
     if (!name.trim()) {
       setError('Sprint name is required.')
@@ -249,7 +260,7 @@ export default function Sprints() {
           </p>
         </div>
 
-        {canManage && selectedProject && (
+        {canManage && selectedProjectInfo?.methodology === 'SCRUM' && (
           <button
             onClick={() => setShowCreate(true)}
             className="px-4 py-2.5 rounded-xl bg-slate-900 text-white font-medium hover:bg-slate-800"
@@ -273,8 +284,8 @@ export default function Sprints() {
           {projects.map((project) => (
             <option key={project.id} value={project.id}>
               {project.project_key
-                ? `${project.project_key} — ${project.name}`
-                : project.name}
+                ? `[${project.methodology}] ${project.project_key} — ${project.name}`
+                : `[${project.methodology}] ${project.name}`}
             </option>
           ))}
         </select>
@@ -288,7 +299,16 @@ export default function Sprints() {
 
       {/* Sprint list */}
       <div className="space-y-4">
-        {loading ? (
+        {selectedProjectInfo?.methodology === 'KANBAN' ? (
+          <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center">
+            <h3 className="font-semibold text-slate-800 text-lg">
+              Kanban Methodology
+            </h3>
+            <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto">
+              Work flows continuously through the board without requiring sprints. Sprint planning and sprint controls are not used for Kanban projects.
+            </p>
+          </div>
+        ) : loading ? (
           <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-500">
             Loading sprints...
           </div>

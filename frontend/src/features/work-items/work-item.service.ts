@@ -106,6 +106,13 @@ export async function getWorkItems(token: string) {
   return request(token, '/work-items') as Promise<WorkItem[]>
 }
 
+export async function getWorkItem(
+  token: string,
+  id: string,
+) {
+  return request(token, `/work-items/${id}`) as Promise<WorkItem>
+}
+
 export async function createWorkItem(
   token: string,
   data: {
@@ -167,10 +174,11 @@ export async function updateWorkItemStatus(
     | 'BLOCKED'
     | 'DONE',
   notes?: string,
+  action?: 'STATUS_CHANGE' | 'SEND_BACK',
 ) {
   return request(token, `/work-items/${id}/status`, {
     method: 'PATCH',
-    body: JSON.stringify({ status, notes }),
+    body: JSON.stringify({ status, notes, action }),
   }) as Promise<WorkItem>
 }
 

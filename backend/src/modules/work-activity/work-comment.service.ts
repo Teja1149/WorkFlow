@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { logActivity } from './work-activity.service.js'
 import { createNotification } from '../notifications/notification.service.js'
+import { NotificationType } from '../notifications/notification.types.js'
 
 export async function getComments(workItemId: string) {
   const { data, error } = await supabaseAdmin
@@ -75,18 +76,33 @@ export async function addComment(
       .single()
 
     if (item) {
-      const recipientId = item.created_by === userId ? item.assigned_to : item.created_by
-      if (recipientId && recipientId !== userId) {
-        const userName = data.user?.first_name || 'Someone'
-        await createNotification({
-          userId: recipientId,
-          organizationId: item.organization_id,
-          type: 'COMMENT_ADDED',
-          title: 'New comment',
-          message: `${userName} commented on "${item.title}".`,
-          workItemId: workItemId,
-          projectId: item.project_id,
-        })
+      const recipients = [
+        item.created_by,
+        item.assigned_to,
+      ].filter(
+        (id): id is string =>
+          Boolean(id) && id !== userId,
+      )
+
+      const userName = data.user?.first_name || 'Someone'
+
+      for (const recipientId of [...new Set(recipients)]) {
+        try {
+          await createNotification({
+            userId: recipientId,
+            organizationId: item.organization_id,
+            type: NotificationType.COMMENT_ADDED,
+            title: 'New comment',
+            message: `${userName} commented on "${item.title}".`,
+            workItemId,
+            projectId: item.project_id,
+          })
+        } catch (notificationError) {
+          console.error(
+            `Failed to notify ${recipientId} about comment:`,
+            notificationError,
+          )
+        }
       }
     }
   } catch {

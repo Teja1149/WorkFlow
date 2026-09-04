@@ -4,6 +4,7 @@ const API_URL = import.meta.env.VITE_API_URL || '/api'
 
 export interface ConversationMember {
   user_id: string
+  last_read_at?: string | null
   user?: UserProfile
 }
 
@@ -62,6 +63,16 @@ export async function createConversation(
     method: 'POST',
     body: JSON.stringify(data),
   }) as Promise<Conversation>
+}
+
+export async function getConversationPeople(token: string) {
+  return request(token, '/conversations/people') as Promise<UserProfile[]>
+}
+
+export async function markConversationRead(token: string, conversationId: string) {
+  return request(token, `/conversations/${conversationId}/read`, {
+    method: 'PATCH',
+  })
 }
 
 export async function getMessages(token: string, conversationId: string) {

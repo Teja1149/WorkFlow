@@ -30,7 +30,7 @@ router.post(
 router.patch(
   '/:id',
   requireAuth,
-  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'EMPLOYEE'),
+  requireRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER'),
   patchProject,
 )
 

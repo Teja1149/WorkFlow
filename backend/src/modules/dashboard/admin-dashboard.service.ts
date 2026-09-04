@@ -3,6 +3,7 @@ import { DateTime } from 'luxon'
 
 export async function getAdminDashboard(organizationId: string) {
   const today = DateTime.now().setZone('Asia/Kolkata').toISODate()!
+  const currentTime = DateTime.now().setZone('Asia/Kolkata')
 
   // 1. Fetch all projects
   const { data: projects, error: pErr } = await supabaseAdmin
@@ -15,10 +16,9 @@ export async function getAdminDashboard(organizationId: string) {
 
   // 2. Fetch all employees & managers
   const { data: users, error: uErr } = await supabaseAdmin
-    .from('user_profiles')
+    .from('profiles')
     .select('id, first_name, last_name, role, email')
     .eq('organization_id', organizationId)
-    .in('status', ['ACTIVE', 'INVITED'])
 
   if (uErr) throw new Error(uErr.message)
 
@@ -33,6 +33,8 @@ export async function getAdminDashboard(organizationId: string) {
       deadline,
       deadline_time,
       health,
+      completed_at,
+      updated_at,
       carry_forward_count,
       project_id,
       assigned_to,
@@ -65,14 +67,14 @@ export async function getAdminDashboard(organizationId: string) {
       created_at
     `)
     .eq('organization_id', organizationId)
-    .eq('target_date', today)
+    .eq('deadline_date', today)
 
   if (dtErr) console.warn('Daily targets query notice:', dtErr)
 
   // 5. Fetch project targets
   const { data: projectTargets, error: ptErr } = await supabaseAdmin
     .from('project_targets')
-    .select('id, project_id, name, target_value, actual_value, unit, health, status')
+    .select('id, project_id, name, target_value, completed_value, actual_value, unit, health, status')
     .eq('organization_id', organizationId)
 
   if (ptErr) console.warn('Project targets query notice:', ptErr)
@@ -82,14 +84,23 @@ export async function getAdminDashboard(organizationId: string) {
   const allProjects = projects || []
   const allUsers = users || []
 
-  // Metrics computation
-  const activeProjectsCount = allProjects.length || 12
-  const worksAssignedCount = items.length || targets.length || 86
-  const inProgressCount = items.filter((w) => w.status === 'IN_PROGRESS').length || 31
-  const completedTodayCount =
-    items.filter((w) => w.status === 'DONE').length ||
-    targets.filter((t) => t.status === 'COMPLETED').length ||
-    42
+  // Active projects (not COMPLETED or CANCELLED)
+  const activeProjects = allProjects.filter(
+    (p) => !['COMPLETED', 'CANCELLED'].includes(p.status),
+  )
+
+  // Metrics computation — 100% strict database counts
+  const activeProjectsCount = activeProjects.length
+  const worksAssignedCount = items.filter((w) => w.assigned_to && w.status !== 'DONE').length
+  const inProgressCount = items.filter((w) =>
+    ['IN_PROGRESS', 'DEVELOPMENT', 'IN_REVIEW'].includes(w.status),
+  ).length
+  const completedTodayCount = items.filter(
+    (w) =>
+      w.status === 'DONE' &&
+      ((w.completed_at && w.completed_at.slice(0, 10) === today) ||
+        (w.updated_at && w.updated_at.slice(0, 10) === today)),
+  ).length
 
   const overdueItems = items.filter((w) => {
     if (w.status === 'DONE') return false
@@ -97,7 +108,7 @@ export async function getAdminDashboard(organizationId: string) {
     return w.deadline.slice(0, 10) < today || w.health === 'RED' || w.health === 'CRITICAL'
   })
 
-  const overdueCount = overdueItems.length || 7
+  const overdueCount = overdueItems.length
 
   const carriedTargets = targets.filter(
     (t) =>
@@ -106,7 +117,7 @@ export async function getAdminDashboard(organizationId: string) {
       (t.carry_forward_count && t.carry_forward_count > 0),
   )
 
-  const carryForwardCount = carriedTargets.length || 5
+  const carryForwardCount = carriedTargets.length
 
   const dueTodayItems = items.filter((w) => {
     if (w.status === 'DONE') return false
@@ -114,15 +125,15 @@ export async function getAdminDashboard(organizationId: string) {
     return w.deadline.slice(0, 10) === today
   })
 
-  const dueTodayCount = dueTodayItems.length || 23
+  const dueTodayCount = dueTodayItems.length
 
   const atRiskItems = items.filter(
     (w) =>
       w.status !== 'DONE' &&
-      (w.health === 'RED' || w.health === 'CRITICAL' || w.health === 'AMBER'),
+      ['RED', 'CRITICAL', 'AMBER', 'ORANGE'].includes(w.health),
   )
 
-  const atRiskCount = atRiskItems.length || 4
+  const atRiskCount = atRiskItems.length
 
   // Pulse Calculation
   const pendingCount = Math.max(
@@ -132,7 +143,7 @@ export async function getAdminDashboard(organizationId: string) {
   const pulsePercentage =
     worksAssignedCount > 0
       ? Math.min(100, Math.round((completedTodayCount / worksAssignedCount) * 100))
-      : 49
+      : 0
 
   // User map for lookup
   const userMap = new Map<string, string>()
@@ -142,65 +153,77 @@ export async function getAdminDashboard(organizationId: string) {
   })
 
   // Overdue Work list
-  const overdueWork = overdueItems.slice(0, 5).map((w) => {
-    const empName = userMap.get(w.assigned_to || '') || 'Team Member'
-    const projName = (w.projects as any)?.name || 'Project'
+  const overdueWork = overdueItems.slice(0, 10).map((w) => {
+    const empName = userMap.get(w.assigned_to || '') || 'Unassigned'
+    const projName = (w.projects as any)?.name || 'No Project'
     return {
       id: w.id,
       employeeName: empName,
       workTitle: w.title,
       projectName: projName,
-      pendingCount: '2 items pending',
+      pendingCount: '1 item pending',
       deadlineText: w.deadline ? `Due: ${w.deadline.slice(0, 10)}` : 'Due: Today',
       isCritical: w.health === 'CRITICAL' || w.health === 'RED',
     }
   })
 
   // Carried Forward list
-  const carriedForwardWork = carriedTargets.slice(0, 5).map((t) => {
+  const carriedForwardWork = carriedTargets.slice(0, 10).map((t) => {
     const empName = userMap.get(t.employee_id || '') || 'Team Member'
     const days = t.carry_forward_count || 1
     return {
       id: t.id,
       employeeName: empName,
-      projectName: 'Video Project',
+      projectName: 'Daily Target',
       workTitle: t.title,
-      remaining: Math.max(1, (t.target_value || 1) - (t.actual_value || 0)),
+      remaining: Math.max(0, (t.target_value || 0) - (t.actual_value || 0)),
       days,
       isCritical: days >= 3,
     }
   })
 
-  // Project Health List
-  const projectHealth = (allProjects || []).slice(0, 5).map((p, idx) => {
-    const pTargets = (projectTargets || []).filter((pt) => pt.project_id === p.id)
-    const targetVal = pTargets.reduce((s, pt) => s + (pt.target_value || 0), 0) || (idx === 0 ? 10 : idx === 1 ? 50 : 30)
-    const actualVal = pTargets.reduce((s, pt) => s + (pt.actual_value || 0), 0) || (idx === 0 ? 6 : idx === 1 ? 31 : 12)
-    const pendingVal = Math.max(0, targetVal - actualVal)
-    const achievement = targetVal > 0 ? Math.min(100, Math.round((actualVal / targetVal) * 100)) : 0
-    const health = achievement >= 60 ? 'GREEN' : achievement >= 35 ? 'AMBER' : 'RED'
+  // Project Health List (Strictly from real database work items)
+  const projectHealth = activeProjects.map((p) => {
+    const pWork = items.filter((w) => w.project_id === p.id)
+    const total = pWork.length
+    const done = pWork.filter((w) => w.status === 'DONE').length
+    const pendingVal = Math.max(0, total - done)
+    const achievement = total > 0 ? Math.round((done / total) * 100) : 0
+    const health =
+      achievement >= 70
+        ? 'GREEN'
+        : achievement >= 40
+        ? 'AMBER'
+        : total === 0
+        ? 'GREEN'
+        : 'RED'
 
     return {
       id: p.id,
       name: p.name,
-      targetFormatted: `${targetVal} units`,
-      done: actualVal,
+      targetFormatted: `${total} tasks`,
+      done,
       pending: pendingVal,
       achievement,
-      health,
+      health: health as 'GREEN' | 'AMBER' | 'RED',
     }
   })
 
-  // Team Workload List
+  // Team Workload List (Strictly from real database records)
   const teamWorkload = allUsers.map((u) => {
     const uWork = items.filter((w) => w.assigned_to === u.id)
-    const assigned = uWork.length || (u.role === 'MANAGER' ? 4 : 8)
-    const done = uWork.filter((w) => w.status === 'DONE').length || Math.floor(assigned * 0.6)
-    const pending = Math.max(0, assigned - done)
+    const assigned = uWork.length
+    const done = uWork.filter(
+      (w) =>
+        w.status === 'DONE' &&
+        ((w.completed_at && w.completed_at.slice(0, 10) === today) ||
+          (w.updated_at && w.updated_at.slice(0, 10) === today)),
+    ).length
+    const pending = uWork.filter((w) => w.status !== 'DONE').length
 
     let load: 'GREEN' | 'AMBER' | 'RED' = 'GREEN'
-    if (assigned >= 14 || pending >= 8) load = 'RED'
-    else if (assigned >= 10 || pending >= 5) load = 'AMBER'
+    if (pending >= 10) load = 'RED'
+    else if (pending >= 5) load = 'AMBER'
 
     const name = `${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email
     return {
@@ -213,34 +236,31 @@ export async function getAdminDashboard(organizationId: string) {
     }
   })
 
-  // Live Activity feed
-  const currentTime = DateTime.now().setZone('Asia/Kolkata')
-  const liveActivity = [
-    {
-      id: 'act-1',
-      time: currentTime.minus({ minutes: 2 }).toFormat('HH:mm'),
-      text: 'Mahesh completed 1 video',
-      projectName: 'ABC Video Project',
-    },
-    {
-      id: 'act-2',
-      time: currentTime.minus({ minutes: 5 }).toFormat('HH:mm'),
-      text: 'Ravi updated website work',
-      projectName: 'Website Development',
-    },
-    {
-      id: 'act-3',
-      time: currentTime.minus({ minutes: 8 }).toFormat('HH:mm'),
-      text: 'Manager completed client report',
-      projectName: 'Operations',
-    },
-    {
-      id: 'act-4',
-      time: currentTime.minus({ minutes: 12 }).toFormat('HH:mm'),
-      text: "Neeraja's target became overdue",
-      projectName: 'Customer Support',
-    },
-  ]
+  // Live Activity feed from actual work_updates
+  const workItemIds = items.map((w) => w.id)
+  const { data: realUpdates } = workItemIds.length > 0
+    ? await supabaseAdmin
+        .from('work_updates')
+        .select(`
+          id,
+          work_item_id,
+          employee_id,
+          update_text,
+          created_at,
+          employee:profiles!work_updates_employee_id_fkey(first_name, last_name, email),
+          work_item:work_items!work_updates_work_item_id_fkey(title, project_id, projects(name))
+        `)
+        .in('work_item_id', workItemIds)
+        .order('created_at', { ascending: false })
+        .limit(10)
+    : { data: [] }
+
+  const liveActivity = (realUpdates || []).map((u: any) => ({
+    id: u.id,
+    time: DateTime.fromISO(u.created_at).setZone('Asia/Kolkata').toFormat('HH:mm'),
+    text: `${u.employee ? `${u.employee.first_name || ''} ${u.employee.last_name || ''}`.trim() || u.employee.email : 'Team Member'}: ${u.update_text || 'Updated work'}`,
+    projectName: u.work_item?.projects?.name || 'Project',
+  }))
 
   return {
     metrics: {
@@ -258,7 +278,7 @@ export async function getAdminDashboard(organizationId: string) {
       completed: completedTodayCount,
       inProgress: inProgressCount,
       overdue: overdueCount,
-      pending: pendingCount || 6,
+      pending: pendingCount,
       percentage: pulsePercentage,
     },
     overdueWork,

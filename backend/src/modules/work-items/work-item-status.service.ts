@@ -1,13 +1,26 @@
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { logActivity } from '../work-activity/work-activity.service.js'
-import { notifyStakeholders } from '../notifications/notification.service.js'
+import {
+  notifyWorkStakeholders,
+  notifyWorkCompleted,
+  notifyWorkSentBack,
+  getDirectManagerId,
+  getOrganizationStakeholderIds,
+} from '../notifications/notification.service.js'
+import { NotificationType } from '../notifications/notification.types.js'
 
-export type WorkStatus = 'TODO' | 'IN_PROGRESS' | 'BLOCKED' | 'DONE'
+export type WorkStatus =
+  | 'TODO'
+  | 'IN_PROGRESS'
+  | 'BLOCKED'
+  | 'IN_REVIEW'
+  | 'DONE'
 
 export const statusDisplayLabels: Record<string, string> = {
   TODO: 'To Do',
   IN_PROGRESS: 'In Progress',
   BLOCKED: 'Blocked',
+  IN_REVIEW: 'In Review',
   DONE: 'Completed',
 }
 
@@ -18,6 +31,7 @@ export async function transitionWorkItemStatus(
   workItemId: string,
   nextStatus: WorkStatus,
   notes?: string,
+  action?: 'STATUS_CHANGE' | 'SEND_BACK',
 ) {
   const { data: work, error } = await supabaseAdmin
     .from('work_items')
@@ -42,71 +56,100 @@ export async function transitionWorkItemStatus(
     throw new Error('Work item not found.')
   }
 
-  const employeeAllowedTransitions: Record<string, string[]> = {
-    TODO: ['IN_PROGRESS', 'BLOCKED', 'DONE'],
-    IN_PROGRESS: ['DONE', 'BLOCKED', 'TODO'],
-    BLOCKED: ['IN_PROGRESS', 'DONE'],
-    DONE: ['IN_PROGRESS'],
+  const normalizedRole = String(userRole || '').toUpperCase()
+
+  const isManagementRole = [
+    'MANAGER',
+    'ADMIN',
+    'SUPER_ADMIN',
+  ].includes(normalizedRole)
+
+  const isSendBack =
+    action === 'SEND_BACK' &&
+    nextStatus === 'IN_PROGRESS' &&
+    work.status === 'DONE' &&
+    isManagementRole
+
+  if (action === 'SEND_BACK' && !isSendBack) {
+    throw new Error(
+      `Invalid send-back operation. Current status: ${work.status}, role: ${normalizedRole}, next status: ${nextStatus}`,
+    )
   }
 
-  const managerAllowedTransitions: Record<string, string[]> = {
-    TODO: ['IN_PROGRESS', 'BLOCKED', 'DONE'],
-    IN_PROGRESS: ['DONE', 'BLOCKED', 'TODO'],
-    BLOCKED: ['IN_PROGRESS', 'DONE', 'TODO'],
-    DONE: ['IN_PROGRESS', 'TODO'],
+  if (isSendBack && !notes?.trim()) {
+    throw new Error('A reason is required when sending work back.')
   }
 
-  const adminAllowedTransitions: Record<string, string[]> = {
-    TODO: ['IN_PROGRESS', 'BLOCKED', 'DONE'],
-    IN_PROGRESS: ['DONE', 'BLOCKED', 'TODO'],
-    BLOCKED: ['IN_PROGRESS', 'DONE', 'TODO'],
-    DONE: ['IN_PROGRESS', 'TODO'],
-  }
-
-  const isOwnAssignedWork = work.assigned_to === userId
-
-  if (
-    userRole === 'EMPLOYEE' ||
-    (userRole === 'MANAGER' && isOwnAssignedWork)
-  ) {
-    const employeeAllowed =
-      employeeAllowedTransitions[work.status] || []
-
-    if (userRole === 'EMPLOYEE' && !isOwnAssignedWork) {
-      throw new Error(
-        'You can only update your own assigned work.',
-      )
+  if (!isSendBack) {
+    const employeeAllowedTransitions: Record<string, string[]> = {
+      TODO: ['IN_PROGRESS', 'BLOCKED', 'DONE'],
+      IN_PROGRESS: ['IN_REVIEW', 'BLOCKED', 'DONE', 'TODO'],
+      BLOCKED: ['IN_PROGRESS', 'DONE'],
+      IN_REVIEW: ['DONE', 'IN_PROGRESS'],
+      DONE: ['IN_PROGRESS'],
     }
 
-    if (!employeeAllowed.includes(nextStatus)) {
-      throw new Error(
-        'You can only update your assigned work using the allowed workflow.',
-      )
+    const managerAllowedTransitions: Record<string, string[]> = {
+      TODO: ['IN_PROGRESS', 'BLOCKED', 'DONE'],
+      IN_PROGRESS: ['IN_REVIEW', 'BLOCKED', 'DONE', 'TODO'],
+      BLOCKED: ['IN_PROGRESS', 'DONE', 'TODO'],
+      IN_REVIEW: ['DONE', 'IN_PROGRESS', 'BLOCKED'],
+      DONE: ['IN_PROGRESS', 'TODO'],
     }
-  }
 
-  if (
-    userRole === 'MANAGER' &&
-    !isOwnAssignedWork
-  ) {
-    const managerAllowed =
-      managerAllowedTransitions[work.status] || []
-
-    if (!managerAllowed.includes(nextStatus)) {
-      throw new Error(
-        `Managers cannot change work from ${work.status} to ${nextStatus}.`,
-      )
+    const adminAllowedTransitions: Record<string, string[]> = {
+      TODO: ['IN_PROGRESS', 'BLOCKED', 'DONE'],
+      IN_PROGRESS: ['IN_REVIEW', 'BLOCKED', 'DONE', 'TODO'],
+      BLOCKED: ['IN_PROGRESS', 'DONE', 'TODO'],
+      IN_REVIEW: ['DONE', 'IN_PROGRESS', 'BLOCKED'],
+      DONE: ['IN_PROGRESS', 'TODO'],
     }
-  }
 
-  if (userRole === 'ADMIN' || userRole === 'SUPER_ADMIN') {
-    const adminAllowed =
-      adminAllowedTransitions[work.status] || []
+    const isOwnAssignedWork = work.assigned_to === userId
 
-    if (!adminAllowed.includes(nextStatus)) {
-      throw new Error(
-        `Cannot change work from ${work.status} to ${nextStatus}.`,
-      )
+    if (
+      normalizedRole === 'EMPLOYEE' ||
+      (normalizedRole === 'MANAGER' && isOwnAssignedWork)
+    ) {
+      const employeeAllowed =
+        employeeAllowedTransitions[work.status] || []
+
+      if (normalizedRole === 'EMPLOYEE' && !isOwnAssignedWork) {
+        throw new Error(
+          'You can only update your own assigned work.',
+        )
+      }
+
+      if (!employeeAllowed.includes(nextStatus)) {
+        throw new Error(
+          'You can only update your assigned work using the allowed workflow.',
+        )
+      }
+    }
+
+    if (
+      normalizedRole === 'MANAGER' &&
+      !isOwnAssignedWork
+    ) {
+      const managerAllowed =
+        managerAllowedTransitions[work.status] || []
+
+      if (!managerAllowed.includes(nextStatus)) {
+        throw new Error(
+          `Managers cannot change work from ${work.status} to ${nextStatus}.`,
+        )
+      }
+    }
+
+    if (normalizedRole === 'ADMIN' || normalizedRole === 'SUPER_ADMIN') {
+      const adminAllowed =
+        adminAllowedTransitions[work.status] || []
+
+      if (!adminAllowed.includes(nextStatus)) {
+        throw new Error(
+          `Cannot change work from ${work.status} to ${nextStatus}.`,
+        )
+      }
     }
   }
 
@@ -155,29 +198,73 @@ export async function transitionWorkItemStatus(
   await logActivity(
     workItemId,
     userId,
-    'STATUS_CHANGED',
-    `Status changed from ${statusDisplayLabels[work.status] || work.status} to ${statusDisplayLabels[nextStatus] || nextStatus}.${noteSuffix}`,
+    isSendBack ? 'WORK_SENT_BACK' : 'STATUS_CHANGED',
+    isSendBack
+      ? `Work was sent back for correction.${noteSuffix}`
+      : `Status changed from ${
+          statusDisplayLabels[work.status] || work.status
+        } to ${statusDisplayLabels[nextStatus] || nextStatus}.${noteSuffix}`,
   )
 
   // Notify stakeholders
   const statusLabel = statusDisplayLabels[nextStatus] || nextStatus
+
   try {
-    await notifyStakeholders({
-      organizationId,
-      title: 'Work Status Updated',
-      message: `"${work.title}" is now ${statusLabel}.${noteSuffix}`,
-      type: nextStatus === 'DONE'
-        ? 'WORK_COMPLETED'
-        : 'WORK_UPDATED',
-      workItemId,
-      projectId: work.project_id,
-      authorUserId: userId,
-      recipients: [work.assigned_to, work.created_by].filter(
-        (id) => Boolean(id) && id !== userId,
-      ),
-    })
-  } catch {
-    // Ignore notification failure
+    if (isSendBack) {
+      await notifyWorkSentBack({
+        organizationId,
+        workItemId,
+        projectId: work.project_id,
+        title: 'Work Sent Back',
+        message: `"${work.title}" was sent back for correction.${noteSuffix}`,
+        authorUserId: userId,
+        assignedTo: work.assigned_to,
+        createdBy: work.created_by,
+      })
+    } else if (nextStatus === 'DONE') {
+      await notifyWorkCompleted({
+        organizationId,
+        workItemId,
+        projectId: work.project_id,
+        title: 'Work Completed',
+        message: `"${work.title}" has been completed.${noteSuffix}`,
+        authorUserId: userId,
+        assignedTo: work.assigned_to,
+        createdBy: work.created_by,
+      })
+    } else {
+      const leadership = await getOrganizationStakeholderIds(organizationId, [
+        'SUPER_ADMIN',
+        'ADMIN',
+        'MANAGER',
+      ])
+      const managerId = work.assigned_to
+        ? await getDirectManagerId(work.assigned_to, organizationId)
+        : null
+
+      const recipients = [
+        work.assigned_to,
+        work.created_by,
+        managerId,
+        ...leadership,
+      ].filter((id): id is string => Boolean(id) && id !== userId)
+
+      await notifyWorkStakeholders({
+        organizationId,
+        title: 'Work Status Updated',
+        message: `"${work.title}" is now ${statusLabel}.${noteSuffix}`,
+        type: NotificationType.WORK_UPDATED,
+        workItemId,
+        projectId: work.project_id,
+        authorUserId: userId,
+        recipients,
+      })
+    }
+  } catch (notificationError) {
+    console.error(
+      '[WorkStatus] Notification failed:',
+      notificationError,
+    )
   }
 
   return updatedWork

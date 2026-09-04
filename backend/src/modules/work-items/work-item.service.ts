@@ -3,7 +3,11 @@ import { logActivity } from '../work-activity/work-activity.service.js'
 import {
   createNotification,
   notifyStakeholders,
+  notifyWorkAssignment,
+  notifyWorkReassignment,
+  notifyWorkStakeholders,
 } from '../notifications/notification.service.js'
+import { NotificationType } from '../notifications/notification.types.js'
 import { transitionWorkItemStatus } from './work-item-status.service.js'
 
 export type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
@@ -18,6 +22,11 @@ export async function getWorkItems(
   organizationId: string,
   userId: string,
   role: string,
+  filters?: {
+    assigned_to?: string
+    project_id?: string
+    status?: string
+  },
 ) {
   let query = supabaseAdmin
     .from('work_items')
@@ -66,10 +75,9 @@ export async function getWorkItems(
     .eq('organization_id', organizationId)
 
   if (role === 'EMPLOYEE') {
+    // Employee can ONLY see work assigned to them, cannot see anyone else's work
     query = query.eq('assigned_to', userId)
-  }
-
-  if (role === 'MANAGER') {
+  } else if (role === 'MANAGER') {
     const { data: employeeProfiles, error: employeeError } =
       await supabaseAdmin
         .from('profiles')
@@ -93,17 +101,132 @@ export async function getWorkItems(
       ...employeeIds,
     ])]
 
-    if (visibleIds.length > 0) {
-      query = query.in('assigned_to', visibleIds)
+    if (filters?.assigned_to) {
+      if (visibleIds.includes(filters.assigned_to)) {
+        query = query.eq('assigned_to', filters.assigned_to)
+      } else {
+        query = query.eq('assigned_to', userId)
+      }
     } else {
-      query = query.eq('assigned_to', userId)
+      if (visibleIds.length > 0) {
+        query = query.in('assigned_to', visibleIds)
+      } else {
+        query = query.eq('assigned_to', userId)
+      }
     }
+  } else {
+    // Admin / Super Admin
+    if (filters?.assigned_to) {
+      query = query.eq('assigned_to', filters.assigned_to)
+    }
+  }
+
+  if (filters?.project_id) {
+    query = query.eq('project_id', filters.project_id)
+  }
+
+  if (filters?.status) {
+    query = query.eq('status', filters.status)
   }
 
   const { data, error } = await query.order('created_at', { ascending: false })
 
   if (error) {
     throw new Error(error.message)
+  }
+
+  return data
+}
+
+export async function getWorkItemById(
+  organizationId: string,
+  userId: string,
+  role: string,
+  workItemId: string,
+) {
+  let query = supabaseAdmin
+    .from('work_items')
+    .select(`
+      *,
+      projects:project_id (
+        id,
+        name,
+        project_key
+      ),
+      work_types:work_type_id (
+        id,
+        name,
+        description,
+        icon,
+        color,
+        is_active
+      ),
+      project_modules:module_id (
+        id,
+        name,
+        description,
+        is_active
+      ),
+      project_milestones:milestone_id (
+        id,
+        name,
+        deadline,
+        status
+      ),
+      assignee:assigned_to (
+        id,
+        first_name,
+        last_name,
+        email,
+        employee_id,
+        role
+      ),
+      creator:created_by (
+        id,
+        first_name,
+        last_name,
+        email
+      )
+    `)
+    .eq('organization_id', organizationId)
+    .eq('id', workItemId)
+
+  if (role === 'EMPLOYEE') {
+    query = query.eq('assigned_to', userId)
+  }
+
+  if (role === 'MANAGER') {
+    const { data: employeeProfiles, error: employeeError } =
+      await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .eq('organization_id', organizationId)
+        .eq('role', 'EMPLOYEE')
+
+    if (employeeError) {
+      throw new Error(employeeError.message)
+    }
+
+    const employeeIds = (employeeProfiles || []).map(
+      (employee) => employee.id,
+    )
+
+    const visibleIds = [...new Set([
+      userId,
+      ...employeeIds,
+    ])]
+
+    query = query.in('assigned_to', visibleIds)
+  }
+
+  const { data, error } = await query.maybeSingle()
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  if (!data) {
+    throw new Error('Work item not found.')
   }
 
   return data
@@ -280,17 +403,17 @@ export async function createWorkItem(
   // Log activity
   await logActivity(data.id, createdBy, 'WORK_ASSIGNED', `Created work item: ${input.title}`)
 
-  // Automatic Notifications to Manager, Admins, and Assigned Employee
+  // Automatic Notifications to Assigned Employee & Manager
   try {
-    await notifyStakeholders({
+    await notifyWorkAssignment({
       organizationId,
-      title: 'New Work Item Created',
-      message: `Work item "${data.title}" was created.`,
-      type: 'WORK_ASSIGNED',
       workItemId: data.id,
       projectId: data.project_id,
+      title: 'New Work Item Created',
+      message: `Work item "${data.title}" was created.`,
       authorUserId: createdBy,
-      recipients: [data.assigned_to],
+      assignedTo: data.assigned_to,
+      createdBy,
     })
   } catch (notifErr) {
     console.error('Failed to notify work creation:', notifErr)
@@ -526,16 +649,31 @@ export async function updateWorkItem(
         const reasonText = input.assignment_reason?.trim()
           ? ` Reason: ${input.assignment_reason.trim()}`
           : ''
-        await notifyStakeholders({
-          organizationId,
-          title: 'Work Reassigned',
-          message: `"${existing.title}" has been assigned to you.${reasonText}`,
-          type: 'WORK_REASSIGNED',
-          workItemId,
-          projectId: existing.project_id,
-          authorUserId: userId,
-          recipients: [input.assigned_to],
-        })
+        
+        if (existing.assigned_to && existing.assigned_to !== input.assigned_to) {
+          await notifyWorkReassignment({
+            organizationId,
+            workItemId,
+            projectId: existing.project_id,
+            title: 'Work Reassigned',
+            message: `"${existing.title}" was reassigned.${reasonText}`,
+            authorUserId: userId,
+            previousAssignedTo: existing.assigned_to,
+            newAssignedTo: input.assigned_to,
+            createdBy: existing.created_by,
+          })
+        } else {
+          await notifyWorkAssignment({
+            organizationId,
+            workItemId,
+            projectId: existing.project_id,
+            title: 'Work Assigned',
+            message: `"${existing.title}" has been assigned to you.${reasonText}`,
+            authorUserId: userId,
+            assignedTo: input.assigned_to,
+            createdBy: existing.created_by,
+          })
+        }
       } catch (notifErr) {
         console.error('Failed to notify work reassignment:', notifErr)
       }
@@ -609,6 +747,7 @@ export async function createWorkUpdate(
   employeeId: string,
   workItemId: string,
   input: AddWorkUpdateInput,
+  userRole?: string,
 ) {
   const { data: work } = await supabaseAdmin
     .from('work_items')
@@ -623,8 +762,11 @@ export async function createWorkUpdate(
     throw new Error('Work item not found.')
   }
 
-  if (work.assigned_to !== employeeId) {
-    throw new Error('Only the assigned employee can submit this update.')
+  const isAssignee = work.assigned_to === employeeId
+  const isManagement = ['MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole || '')
+
+  if (!isAssignee && !isManagement) {
+    throw new Error('Only the assigned employee or management can submit this update.')
   }
 
   if (!input.update_text?.trim()) {

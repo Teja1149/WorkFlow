@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react'
+import { useNavigate, Navigate } from 'react-router-dom'
 import {
   FolderKanban,
   CheckSquare,
@@ -16,6 +16,7 @@ import {
 import { useAuth } from '../features/auth/AuthContext'
 import { getLiveOverview, type LiveOverviewData } from '../features/dashboard/dashboard.service'
 import { supabase } from '../lib/supabase'
+import DailyReportRequiredBanner from '../features/projects/components/DailyReportRequiredBanner'
 
 export type LiveStatus = 'CONNECTED' | 'RECONNECTING' | 'DISCONNECTED'
 
@@ -34,11 +35,16 @@ export default function Dashboard() {
   // Fetch canonical live overview from the backend
   const loadDashboardData = useCallback(async (isSilent = false) => {
     if (!accessToken) return
-    if (!isSilent && !liveData) setLoading(true)
-    else setRefreshing(true)
+
+    if (isSilent) {
+      setRefreshing(true)
+    } else {
+      setLoading(true)
+    }
 
     try {
       const data = await getLiveOverview(accessToken)
+
       if (data) {
         setLiveData(data)
         setLastUpdated(new Date())
@@ -46,14 +52,22 @@ export default function Dashboard() {
         setLiveStatus('CONNECTED')
       }
     } catch (err) {
-      console.error('[WorkOverview] Failed to load canonical overview:', err)
+      console.error(
+        '[WorkOverview] Failed to load canonical overview:',
+        err,
+      )
       setLiveStatus('RECONNECTING')
-      // Do NOT wipe out existing data on network/API failure!
     } finally {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [accessToken, liveData])
+  }, [accessToken])
+
+  // Stable ref for loadDashboardData to prevent subscription teardowns
+  const loadDashboardDataRef = useRef(loadDashboardData)
+  useEffect(() => {
+    loadDashboardDataRef.current = loadDashboardData
+  }, [loadDashboardData])
 
   // Initial Load
   useEffect(() => {
@@ -83,14 +97,17 @@ export default function Dashboard() {
     return () => clearInterval(safetyNet)
   }, [loadDashboardData])
 
-  // Supabase Realtime Subscriptions (Event-driven instant invalidation)
+  // Supabase Realtime — Work Overview (Stable lifecycle per organization)
   useEffect(() => {
-    if (!profile?.organization_id) return
+    if (!profile?.organization_id || !accessToken) return
 
     const orgId = profile.organization_id
+    console.log('[WorkOverview] Creating realtime channel', orgId)
 
     const channel = supabase
-      .channel(`live-overview-${orgId}`)
+      .channel(`live-overview:${orgId}`)
+
+      // Work items changed (assigned, status, priority, health, deadline)
       .on(
         'postgres_changes',
         {
@@ -99,11 +116,13 @@ export default function Dashboard() {
           table: 'work_items',
           filter: `organization_id=eq.${orgId}`,
         },
-        () => {
-          setLiveStatus('CONNECTED')
-          loadDashboardData(true)
+        (payload) => {
+          console.log('[WorkOverview] REALTIME EVENT (work_items):', payload)
+          void loadDashboardDataRef.current(true)
         },
       )
+
+      // Projects changed (created, updated, archived)
       .on(
         'postgres_changes',
         {
@@ -112,11 +131,28 @@ export default function Dashboard() {
           table: 'projects',
           filter: `organization_id=eq.${orgId}`,
         },
-        () => {
-          setLiveStatus('CONNECTED')
-          loadDashboardData(true)
+        (payload) => {
+          console.log('[WorkOverview] REALTIME EVENT (projects):', payload)
+          void loadDashboardDataRef.current(true)
         },
       )
+
+      // Employees / Profiles changed (created, role changed, status changed)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'profiles',
+          filter: `organization_id=eq.${orgId}`,
+        },
+        (payload) => {
+          console.log('[WorkOverview] REALTIME EVENT (profiles):', payload)
+          void loadDashboardDataRef.current(true)
+        },
+      )
+
+      // Daily targets changed
       .on(
         'postgres_changes',
         {
@@ -125,11 +161,13 @@ export default function Dashboard() {
           table: 'daily_work_targets',
           filter: `organization_id=eq.${orgId}`,
         },
-        () => {
-          setLiveStatus('CONNECTED')
-          loadDashboardData(true)
+        (payload) => {
+          console.log('[WorkOverview] REALTIME EVENT (daily_work_targets):', payload)
+          void loadDashboardDataRef.current(true)
         },
       )
+
+      // Work progress updates
       .on(
         'postgres_changes',
         {
@@ -137,33 +175,97 @@ export default function Dashboard() {
           schema: 'public',
           table: 'work_updates',
         },
-        () => {
-          setLiveStatus('CONNECTED')
-          loadDashboardData(true)
+        (payload) => {
+          console.log('[WorkOverview] REALTIME EVENT (work_updates):', payload)
+          void loadDashboardDataRef.current(true)
         },
       )
+
+      // Project daily report submissions
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'project_daily_updates',
+        },
+        (payload) => {
+          console.log('[WorkOverview] REALTIME EVENT (project_daily_updates):', payload)
+          void loadDashboardDataRef.current(true)
+        },
+      )
+
+      // Work concerns created / resolved
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'work_concerns',
+        },
+        (payload) => {
+          console.log('[WorkOverview] REALTIME EVENT (work_concerns):', payload)
+          void loadDashboardDataRef.current(true)
+        },
+      )
+
+      // Project membership changed
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'project_members',
+        },
+        (payload) => {
+          console.log('[WorkOverview] REALTIME EVENT (project_members):', payload)
+          void loadDashboardDataRef.current(true)
+        },
+      )
+
+      // Notifications created
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'notifications',
+          filter: `organization_id=eq.${orgId}`,
+        },
+        (payload) => {
+          console.log('[WorkOverview] REALTIME EVENT (notifications):', payload)
+          void loadDashboardDataRef.current(true)
+        },
+      )
+
       .subscribe((status) => {
+        console.log('[WorkOverview] Realtime status:', status)
+
         if (status === 'SUBSCRIBED') {
           setLiveStatus('CONNECTED')
-        } else if (status === 'TIMED_OUT' || status === 'CLOSED') {
-          setLiveStatus('DISCONNECTED')
         } else if (status === 'CHANNEL_ERROR') {
           setLiveStatus('RECONNECTING')
+        } else if (status === 'TIMED_OUT' || status === 'CLOSED') {
+          setLiveStatus('DISCONNECTED')
         }
       })
 
     return () => {
-      supabase.removeChannel(channel)
+      void supabase.removeChannel(channel)
     }
-  }, [profile?.organization_id, loadDashboardData])
+  }, [profile?.organization_id, accessToken])
+
+  if (profile?.role === 'EMPLOYEE') {
+    return <Navigate to="/my-day" replace />
+  }
 
   // Render Skeleton while initial load
   if (loading && !liveData) {
     return (
       <div className="space-y-6 animate-pulse pb-12">
         <div className="h-24 bg-slate-200 rounded-2xl w-full" />
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
-          {[...Array(8)].map((_, i) => (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+          {[...Array(9)].map((_, i) => (
             <div key={i} className="h-28 bg-slate-200 rounded-2xl" />
           ))}
         </div>
@@ -176,21 +278,27 @@ export default function Dashboard() {
     )
   }
 
-  // Safe fallback shape
+  // Safe fallback shape — Strictly Zeros (Never mock/demo fallbacks)
   const data = liveData || {
     generatedAt: new Date().toISOString(),
     timezone: 'Asia/Kolkata',
     today: new Date().toISOString().slice(0, 10),
     summary: {
+      employees: 0,
+      totalEmployees: 0,
       projects: 0,
+      totalProjects: 0,
+      activeProjects: 0,
+      totalWork: 0,
       assigned: 0,
       active: 0,
+      inProgress: 0,
       completedToday: 0,
       overdue: 0,
-      carriedForward: 0,
       dueToday: 0,
-      atRisk: 0,
       blocked: 0,
+      carriedForward: 0,
+      atRisk: 0,
     },
     pulse: {
       assigned: 0,
@@ -288,51 +396,102 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* 2. 8 PRIMARY LIVE CARDS WITH EXACT MATHEMATICAL DEFINITIONS & DEEP LINKS */}
-      <div className="space-y-3">
-        {/* Row 1: Core Flow */}
-        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-          {/* Card 1: 🟣 Projects */}
+      {/* PROMINENT DAILY REPORT COMPLIANCE BANNER */}
+      {accessToken && (
+        <DailyReportRequiredBanner
+          accessToken={accessToken}
+          onReportSubmitted={() => loadDashboardData(true)}
+        />
+      )}
+
+      {/* 2. PRIMARY LIVE CARDS (3x3 Grid Derived 100% from Database) */}
+      <div className="space-y-3.5">
+        {/* Row 1: Employees & Projects */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+          {/* Card 1: TOTAL EMPLOYEES */}
+          <button
+            type="button"
+            onClick={() => navigate('/employees')}
+            className="group text-left border border-slate-200 bg-white rounded-2xl p-4.5 shadow-xs hover:shadow-md hover:border-slate-300 transition-all cursor-pointer hover:-translate-y-px"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-500 font-mono uppercase tracking-wider">
+                TOTAL EMPLOYEES
+              </span>
+              <div className="w-7 h-7 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center">
+                <User size={15} />
+              </div>
+            </div>
+            <p className="mt-2 text-2xl sm:text-3xl font-black text-slate-900 group-hover:text-[#801424] transition">
+              {data.summary.employees ?? data.summary.totalEmployees ?? 0}
+            </p>
+            <p className="mt-0.5 text-[11px] text-slate-500 font-medium">Active Workspace Members</p>
+          </button>
+
+          {/* Card 2: TOTAL PROJECTS */}
           <button
             type="button"
             onClick={() => navigate('/projects')}
-            className="group text-left border border-purple-200 bg-purple-50/20 rounded-2xl p-4.5 shadow-xs hover:shadow-md hover:border-purple-300 transition-all cursor-pointer hover:-translate-y-px"
+            className="group text-left border border-slate-200 bg-white rounded-2xl p-4.5 shadow-xs hover:shadow-md hover:border-purple-300 transition-all cursor-pointer hover:-translate-y-px"
           >
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-purple-700 font-mono uppercase tracking-wider">
-                PROJECTS
+                TOTAL PROJECTS
               </span>
               <div className="w-7 h-7 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center">
                 <FolderKanban size={15} />
               </div>
             </div>
             <p className="mt-2 text-2xl sm:text-3xl font-black text-purple-950 group-hover:text-purple-700 transition">
-              {data.summary.projects}
+              {data.summary.projects ?? data.summary.totalProjects ?? 0}
             </p>
-            <p className="mt-0.5 text-[11px] text-purple-600 font-medium">Active Projects</p>
+            <p className="mt-0.5 text-[11px] text-purple-600 font-medium">All Organization Projects</p>
           </button>
 
-          {/* Card 2: 🔵 Assigned */}
+          {/* Card 3: ACTIVE PROJECTS */}
+          <button
+            type="button"
+            onClick={() => navigate('/projects')}
+            className="group text-left border border-purple-200 bg-purple-50/30 rounded-2xl p-4.5 shadow-xs hover:shadow-md hover:border-purple-400 transition-all cursor-pointer hover:-translate-y-px"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-purple-800 font-mono uppercase tracking-wider">
+                ACTIVE PROJECTS
+              </span>
+              <div className="w-7 h-7 rounded-lg bg-purple-200/70 text-purple-800 flex items-center justify-center">
+                <FolderKanban size={15} />
+              </div>
+            </div>
+            <p className="mt-2 text-2xl sm:text-3xl font-black text-purple-950 group-hover:text-purple-700 transition">
+              {data.summary.activeProjects ?? 0}
+            </p>
+            <p className="mt-0.5 text-[11px] text-purple-700 font-medium">Currently In Flight</p>
+          </button>
+        </div>
+
+        {/* Row 2: Work Status Flow */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+          {/* Card 4: TOTAL WORK */}
           <button
             type="button"
             onClick={() => navigate('/work')}
-            className="group text-left border border-blue-200 bg-blue-50/20 rounded-2xl p-4.5 shadow-xs hover:shadow-md hover:border-blue-300 transition-all cursor-pointer hover:-translate-y-px"
+            className="group text-left border border-slate-200 bg-white rounded-2xl p-4.5 shadow-xs hover:shadow-md hover:border-blue-300 transition-all cursor-pointer hover:-translate-y-px"
           >
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-blue-700 font-mono uppercase tracking-wider">
-                ASSIGNED
+                TOTAL WORK
               </span>
               <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
                 <Briefcase size={15} />
               </div>
             </div>
             <p className="mt-2 text-2xl sm:text-3xl font-black text-blue-950 group-hover:text-blue-700 transition">
-              {data.summary.assigned}
+              {data.summary.totalWork ?? 0}
             </p>
-            <p className="mt-0.5 text-[11px] text-blue-600 font-medium">Total Work Assigned</p>
+            <p className="mt-0.5 text-[11px] text-blue-600 font-medium">All Tracked Work Items</p>
           </button>
 
-          {/* Card 3: 🟡 Active */}
+          {/* Card 5: IN PROGRESS / ACTIVE */}
           <button
             type="button"
             onClick={() => navigate('/work?status=IN_PROGRESS')}
@@ -340,19 +499,19 @@ export default function Dashboard() {
           >
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-amber-700 font-mono uppercase tracking-wider">
-                ACTIVE
+                IN PROGRESS
               </span>
               <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
                 <Clock size={15} />
               </div>
             </div>
             <p className="mt-2 text-2xl sm:text-3xl font-black text-amber-950 group-hover:text-amber-700 transition">
-              {data.summary.active}
+              {data.summary.active ?? data.summary.inProgress ?? 0}
             </p>
-            <p className="mt-0.5 text-[11px] text-amber-600 font-medium">In Progress Now</p>
+            <p className="mt-0.5 text-[11px] text-amber-600 font-medium">Actively Being Worked On</p>
           </button>
 
-          {/* Card 4: 🟢 Done */}
+          {/* Card 6: COMPLETED TODAY */}
           <button
             type="button"
             onClick={() => navigate('/work?status=DONE')}
@@ -360,26 +519,26 @@ export default function Dashboard() {
           >
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-emerald-700 font-mono uppercase tracking-wider">
-                DONE
+                COMPLETED TODAY
               </span>
               <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
                 <CheckSquare size={15} />
               </div>
             </div>
             <p className="mt-2 text-2xl sm:text-3xl font-black text-emerald-950 group-hover:text-emerald-700 transition">
-              {data.summary.completedToday}
+              {data.summary.completedToday ?? 0}
             </p>
-            <p className="mt-0.5 text-[11px] text-emerald-600 font-medium">Completed Today</p>
+            <p className="mt-0.5 text-[11px] text-emerald-600 font-medium">Finished Today</p>
           </button>
         </div>
 
-        {/* Row 2: Status / Attention */}
-        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-          {/* Card 5: 🔴 Overdue */}
+        {/* Row 3: Urgency & Blocker Monitoring */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+          {/* Card 7: OVERDUE */}
           <button
             type="button"
             onClick={() => navigate('/work?filter=OVERDUE')}
-            className="group text-left border border-rose-200 bg-rose-50/20 rounded-2xl p-4.5 shadow-xs hover:shadow-md hover:border-rose-300 transition-all cursor-pointer hover:-translate-y-px"
+            className="group text-left border border-rose-200 bg-rose-50/30 rounded-2xl p-4.5 shadow-xs hover:shadow-md hover:border-rose-400 transition-all cursor-pointer hover:-translate-y-px"
           >
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-rose-700 font-mono uppercase tracking-wider">
@@ -390,32 +549,12 @@ export default function Dashboard() {
               </div>
             </div>
             <p className="mt-2 text-2xl sm:text-3xl font-black text-rose-700 group-hover:text-rose-800 transition">
-              {data.summary.overdue}
+              {data.summary.overdue ?? 0}
             </p>
-            <p className="mt-0.5 text-[11px] text-rose-600 font-medium">Needs Attention</p>
+            <p className="mt-0.5 text-[11px] text-rose-600 font-medium">Missed Deadline / High Risk</p>
           </button>
 
-          {/* Card 6: 🟠 Carry Forward */}
-          <button
-            type="button"
-            onClick={() => navigate('/work?filter=CARRY_FORWARD')}
-            className="group text-left border border-orange-200 bg-orange-50/20 rounded-2xl p-4.5 shadow-xs hover:shadow-md hover:border-orange-300 transition-all cursor-pointer hover:-translate-y-px"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-orange-700 font-mono uppercase tracking-wider">
-                CARRY 🟠
-              </span>
-              <div className="w-7 h-7 rounded-lg bg-orange-100 text-orange-700 flex items-center justify-center">
-                <RotateCw size={15} />
-              </div>
-            </div>
-            <p className="mt-2 text-2xl sm:text-3xl font-black text-orange-800 group-hover:text-orange-900 transition">
-              {data.summary.carriedForward}
-            </p>
-            <p className="mt-0.5 text-[11px] text-orange-600 font-medium">From Previous Days</p>
-          </button>
-
-          {/* Card 7: 🟡 Due Today */}
+          {/* Card 8: DUE TODAY */}
           <button
             type="button"
             onClick={() => navigate('/work?filter=DUE_TODAY')}
@@ -423,36 +562,36 @@ export default function Dashboard() {
           >
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-amber-700 font-mono uppercase tracking-wider">
-                DUE 🟡
+                DUE TODAY 🟡
               </span>
               <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
                 <Calendar size={15} />
               </div>
             </div>
             <p className="mt-2 text-2xl sm:text-3xl font-black text-amber-900 group-hover:text-amber-700 transition">
-              {data.summary.dueToday}
+              {data.summary.dueToday ?? 0}
             </p>
-            <p className="mt-0.5 text-[11px] text-amber-600 font-medium">Due Today</p>
+            <p className="mt-0.5 text-[11px] text-amber-600 font-medium">Scheduled for Today</p>
           </button>
 
-          {/* Card 8: 🔴 At Risk */}
+          {/* Card 9: BLOCKED */}
           <button
             type="button"
-            onClick={() => navigate('/work?health=RED')}
-            className="group text-left border border-rose-200 bg-rose-50/20 rounded-2xl p-4.5 shadow-xs hover:shadow-md hover:border-rose-300 transition-all cursor-pointer hover:-translate-y-px"
+            onClick={() => navigate('/work?status=BLOCKED')}
+            className="group text-left border border-amber-200 bg-amber-50/20 rounded-2xl p-4.5 shadow-xs hover:shadow-md hover:border-amber-300 transition-all cursor-pointer hover:-translate-y-px"
           >
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-rose-700 font-mono uppercase tracking-wider">
-                AT RISK 🔴
+              <span className="text-[11px] font-bold text-amber-800 font-mono uppercase tracking-wider">
+                BLOCKED 🟡
               </span>
-              <div className="w-7 h-7 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center">
+              <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center">
                 <AlertCircle size={15} />
               </div>
             </div>
-            <p className="mt-2 text-2xl sm:text-3xl font-black text-rose-700 group-hover:text-rose-800 transition">
-              {data.summary.atRisk}
+            <p className="mt-2 text-2xl sm:text-3xl font-black text-amber-900 group-hover:text-amber-700 transition">
+              {data.summary.blocked ?? 0}
             </p>
-            <p className="mt-0.5 text-[11px] text-rose-600 font-medium">Critical / Blocked</p>
+            <p className="mt-0.5 text-[11px] text-amber-600 font-medium">Impeded / Needs Action</p>
           </button>
         </div>
       </div>
@@ -613,12 +752,12 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Team Workload */}
+        {/* Team Status Table */}
         <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <h2 className="text-xs font-black text-slate-900 font-mono tracking-wider uppercase flex items-center gap-1.5">
               <User size={15} className="text-[#801424]" />
-              TEAM WORKLOAD
+              TEAM STATUS
             </h2>
             <button
               onClick={() => navigate('/team-today')}
@@ -629,50 +768,63 @@ export default function Dashboard() {
             </button>
           </div>
 
-          <div className="space-y-3.5">
+          <div className="overflow-x-auto">
             {data.teamWorkload.length === 0 ? (
               <p className="text-xs text-slate-400 py-4 text-center">No team members</p>
             ) : (
-              data.teamWorkload.map((emp) => {
-                const total = emp.activeTasks + emp.completedToday
-                const pct = total > 0 ? Math.min(100, Math.round((emp.completedToday / total) * 100)) : 0
-                return (
-                  <div
-                    key={emp.id}
-                    onClick={() => navigate(`/employees/${emp.id}/work`)}
-                    className="p-3.5 rounded-xl border border-slate-100 hover:border-slate-300 hover:bg-slate-50/60 transition cursor-pointer space-y-2 group"
-                  >
-                    <div className="flex items-center justify-between text-xs">
-                      <strong className="font-bold text-slate-900 group-hover:text-[#801424]">
-                        {emp.name} {emp.role ? `(${emp.role})` : ''}
-                      </strong>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[11px] text-slate-500">
-                          {emp.completedToday}/{total} ({pct}%)
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-100 text-slate-400 font-mono font-bold text-[11px] uppercase">
+                    <th className="pb-2.5 font-semibold">Employee</th>
+                    <th className="pb-2.5 text-center font-semibold">Active</th>
+                    <th className="pb-2.5 text-center font-semibold">Done Today</th>
+                    <th className="pb-2.5 text-center font-semibold">Overdue</th>
+                    <th className="pb-2.5 text-right font-semibold">Load</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
+                  {data.teamWorkload.map((emp) => (
+                    <tr
+                      key={emp.id}
+                      onClick={() => navigate(`/employees/${emp.id}/work`)}
+                      className="hover:bg-slate-50/80 transition cursor-pointer group"
+                    >
+                      <td className="py-3 pr-2">
+                        <strong className="font-bold text-slate-900 group-hover:text-[#801424]">
+                          {emp.name}
+                        </strong>
+                        {emp.role && (
+                          <span className="block text-[10px] text-slate-400 font-normal">
+                            {emp.role}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 px-2 text-center font-mono font-bold text-slate-700">
+                        {emp.activeTasks}
+                      </td>
+                      <td className="py-3 px-2 text-center font-mono font-bold text-emerald-700">
+                        {emp.completedToday}
+                      </td>
+                      <td className="py-3 px-2 text-center font-mono font-bold text-rose-700">
+                        {emp.overdue}
+                      </td>
+                      <td className="py-3 pl-2 text-right">
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-extrabold font-mono uppercase tracking-wider ${
+                            emp.loadStatus === 'NORMAL'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : emp.loadStatus === 'HIGH'
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                              : 'bg-rose-50 text-rose-700 border border-rose-200'
+                          }`}
+                        >
+                          {emp.loadStatus}
                         </span>
-                        <span>
-                          {emp.loadStatus === 'NORMAL' && '🟢'}
-                          {emp.loadStatus === 'HIGH' && '🟠'}
-                          {emp.loadStatus === 'OVERLOADED' && '🔴'}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          emp.loadStatus === 'NORMAL'
-                            ? 'bg-emerald-500'
-                            : emp.loadStatus === 'HIGH'
-                            ? 'bg-amber-500'
-                            : 'bg-rose-500'
-                        }`}
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                )
-              })
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         </div>

@@ -3,6 +3,7 @@ import {
   getNotifications,
   getUnreadCount,
   markNotificationRead,
+  markNotificationUnread,
   markAllNotificationsRead,
 } from './notification.service.js'
 
@@ -69,6 +70,36 @@ export async function readNotification(req: Request, res: Response) {
     }
 
     const notification = await markNotificationRead(
+      userId,
+      req.params.id as string,
+    )
+
+    return res.json({
+      success: true,
+      data: notification,
+    })
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to update notification.',
+    })
+  }
+}
+
+export async function unreadNotification(req: Request, res: Response) {
+  try {
+    const userId = req.userId
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required.',
+      })
+    }
+
+    const notification = await markNotificationUnread(
       userId,
       req.params.id as string,
     )

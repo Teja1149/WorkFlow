@@ -1778,25 +1778,53 @@ export async function getAttentionCounts(organizationId: string) {
 }
 
 export async function getLiveOverview(organizationId: string) {
-  const settings = await getOrganizationWorkSettings(organizationId)
-  const tz = settings.timezone || 'Asia/Kolkata'
+  let tz = 'Asia/Kolkata'
+  try {
+    const settings = await getOrganizationWorkSettings(organizationId)
+    if (settings?.timezone) tz = settings.timezone
+  } catch (settingsErr) {
+    console.warn('[getLiveOverview settings fallback]:', settingsErr)
+  }
+
   const today = dateInTimezone(tz)
   const currentTime = timeInTimezone(tz)
 
-  // 1. Projects
-  const { data: projects, error: projectsError } = await supabaseAdmin
-    .from('projects')
-    .select('id, name, project_key, status, start_date, end_date')
+  // 1. Fetch Profiles for Organization
+  const { data: profiles, error: profilesError } = await supabaseAdmin
+    .from('profiles')
+    .select('id, first_name, last_name, email, role, designation, status, created_at')
     .eq('organization_id', organizationId)
 
-  if (projectsError) throw new Error(projectsError.message)
+  if (profilesError) {
+    console.error('[getLiveOverview profiles error]:', profilesError)
+    throw new Error(profilesError.message)
+  }
 
-  const activeProjects = (projects || []).filter(
-    (p) => !['COMPLETED', 'CANCELLED'].includes(p.status),
+  const profileMap = new Map<string, any>(
+    (profiles || []).map((p: any) => [p.id, p]),
   )
 
-  // 2. Work Items
-  const { data: workItems, error: workError } = await supabaseAdmin
+  // 2. Fetch Projects for Organization
+  const { data: projects, error: projectsError } = await supabaseAdmin
+    .from('projects')
+    .select('id, name, project_key, status, start_date, target_date')
+    .eq('organization_id', organizationId)
+
+  if (projectsError) {
+    console.error('[getLiveOverview projects error]:', projectsError)
+    throw new Error(projectsError.message)
+  }
+
+  const projectMap = new Map<string, any>(
+    (projects || []).map((p: any) => [p.id, p]),
+  )
+
+  const activeProjects = (projects || []).filter(
+    (p: any) => !['COMPLETED', 'CANCELLED', 'ARCHIVED'].includes(p.status),
+  )
+
+  // 3. Fetch Work Items for Organization
+  const { data: rawWorkItems, error: workError } = await supabaseAdmin
     .from('work_items')
     .select(`
       id,
@@ -1813,25 +1841,43 @@ export async function getLiveOverview(organizationId: string) {
       updated_at,
       created_at,
       carry_forward_count,
-      progress_percent,
-      is_blocked,
-      assignee:profiles!work_items_assigned_to_fkey(id, first_name, last_name, email, role),
-      project:projects!work_items_project_id_fkey(id, name, project_key),
-      work_type:work_types!work_items_work_type_id_fkey(id, name)
+      progress_percent
     `)
     .eq('organization_id', organizationId)
 
-  if (workError) throw new Error(workError.message)
+  if (workError) {
+    console.error('[getLiveOverview work items error]:', workError)
+    throw new Error(workError.message)
+  }
 
-  const allWork = workItems || []
+  // In-memory mapping for relational consistency
+  const allWork = (rawWorkItems || []).map((w: any) => {
+    const assignee = w.assigned_to ? profileMap.get(w.assigned_to) : null
+    const project = w.project_id ? projectMap.get(w.project_id) : null
+    return {
+      ...w,
+      assignee: assignee
+        ? {
+            id: assignee.id,
+            first_name: assignee.first_name,
+            last_name: assignee.last_name,
+            email: assignee.email,
+            role: assignee.role,
+          }
+        : null,
+      project: project
+        ? {
+            id: project.id,
+            name: project.name,
+            project_key: project.project_key,
+          }
+        : null,
+    }
+  })
 
-  // 3. Profiles (for Team Workload)
-  const { data: profiles, error: profilesError } = await supabaseAdmin
-    .from('profiles')
-    .select('id, first_name, last_name, email, role')
-    .eq('organization_id', organizationId)
-
-  if (profilesError) throw new Error(profilesError.message)
+  const workItemMap = new Map<string, any>(
+    allWork.map((w: any) => [w.id, w]),
+  )
 
   // 4. Mathematical card definitions
   const activeAssignedWork = allWork.filter(
@@ -1867,13 +1913,32 @@ export async function getLiveOverview(organizationId: string) {
       ['AMBER', 'ORANGE', 'RED', 'CRITICAL'].includes(w.health),
   )
   const blockedWork = allWork.filter(
-    (w) => w.status === 'BLOCKED' || w.is_blocked,
+    (w) => w.status === 'BLOCKED',
   )
 
+  const totalEmployees = (profiles || []).length
+  const activeEmployees = (profiles || []).filter(
+    (p: any) => p.status !== 'INACTIVE' && p.status !== 'SUSPENDED' && p.role !== 'INACTIVE',
+  ).length
+  const managersCount = (profiles || []).filter((p: any) => ['MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(p.role)).length
+  const employeesOnLeave = (profiles || []).filter((p: any) => p.status === 'ON_LEAVE' || p.is_on_leave).length
+
   const summary = {
-    projects: activeProjects.length,
+    employees: totalEmployees,
+    totalEmployees,
+    activeEmployees,
+    managers: managersCount,
+    employeesOnLeave,
+
+    projects: (projects || []).length,
+    totalProjects: (projects || []).length,
+    activeProjects: activeProjects.length,
+
+    totalWork: allWork.length,
     assigned: activeAssignedWork.length,
     active: activeWork.length,
+    inProgress: activeWork.length,
+
     completedToday: completedTodayWork.length,
     overdue: overdueWork.length,
     carriedForward: carriedForwardWork.length,
@@ -1930,7 +1995,7 @@ export async function getLiveOverview(organizationId: string) {
   }
 
   // Project Health roll-up
-  const projectHealth = activeProjects.map((p) => {
+  const projectHealth = activeProjects.map((p: any) => {
     const pWork = allWork.filter((w) => w.project_id === p.id)
     const total = pWork.length
     const done = pWork.filter((w) => w.status === 'DONE').length
@@ -1961,7 +2026,7 @@ export async function getLiveOverview(organizationId: string) {
   })
 
   // Team Workload roll-up
-  const teamWorkload = (profiles || []).map((emp) => {
+  const teamWorkload = (profiles || []).map((emp: any) => {
     const empWork = allWork.filter((w) => w.assigned_to === emp.id)
     const activeTasks = empWork.filter((w) => w.status !== 'DONE').length
     const completedToday = empWork.filter(
@@ -1998,42 +2063,93 @@ export async function getLiveOverview(organizationId: string) {
     }
   })
 
-  // 5. Recent Live Activity
-  const workItemIds = allWork.map((w) => w.id)
-  const { data: updates } = workItemIds.length > 0
-    ? await supabaseAdmin
-        .from('work_updates')
-        .select(`
-          id,
-          work_item_id,
-          employee_id,
-          update_text,
-          progress_percent,
-          created_at,
-          employee:profiles!work_updates_employee_id_fkey(
-            id,
-            first_name,
-            last_name,
-            email
-          ),
-          work_item:work_items!work_updates_work_item_id_fkey(
-            id,
-            title
-          )
-        `)
-        .in('work_item_id', workItemIds)
-        .order('created_at', { ascending: false })
-        .limit(10)
-    : { data: [] }
+  // 5. Broad Live Activity Stream
+  const activityEvents: Array<{
+    id: string
+    createdAt: string
+    actorName: string
+    workItemTitle: string
+    updateText: string
+    type?: string
+    progressPercent?: number
+  }> = []
 
-  const liveActivity = (updates || []).map((u: any) => ({
-    id: u.id,
-    createdAt: u.created_at,
-    updateText: u.update_text,
-    progressPercent: u.progress_percent,
-    actorName: u.employee ? `${u.employee.first_name || ''} ${u.employee.last_name || ''}`.trim() || u.employee.email : 'Team Member',
-    workItemTitle: u.work_item?.title || 'Work Task',
-  }))
+  // (a) Work updates
+  const workItemIds = allWork.map((w) => w.id)
+  if (workItemIds.length > 0) {
+    const { data: updates, error: updatesError } = await supabaseAdmin
+      .from('work_updates')
+      .select('id, work_item_id, employee_id, update_text, progress_percent, created_at')
+      .in('work_item_id', workItemIds)
+      .order('created_at', { ascending: false })
+      .limit(10)
+
+    if (!updatesError && updates) {
+      for (const u of updates as any[]) {
+        const emp = u.employee_id ? profileMap.get(u.employee_id) : null
+        const item = u.work_item_id ? workItemMap.get(u.work_item_id) : null
+        activityEvents.push({
+          id: u.id,
+          createdAt: u.created_at,
+          actorName: emp ? `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || emp.email : 'Team Member',
+          workItemTitle: item?.title || 'Work Task',
+          updateText: u.update_text || `Progress updated to ${u.progress_percent || 0}%`,
+          progressPercent: u.progress_percent,
+          type: 'WORK_UPDATE',
+        })
+      }
+    }
+  }
+
+  // (b) Notifications / Work events
+  const { data: recentNotifs, error: notifsError } = await supabaseAdmin
+    .from('notifications')
+    .select('id, title, message, type, user_id, created_at')
+    .eq('organization_id', organizationId)
+    .order('created_at', { ascending: false })
+    .limit(10)
+
+  if (!notifsError && recentNotifs) {
+    for (const n of recentNotifs as any[]) {
+      const user = n.user_id ? profileMap.get(n.user_id) : null
+      activityEvents.push({
+        id: n.id,
+        createdAt: n.created_at,
+        actorName: user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email : 'System',
+        workItemTitle: n.title,
+        updateText: n.message,
+        type: n.type,
+      })
+    }
+  }
+
+  // (c) Concerns
+  if (workItemIds.length > 0) {
+    const { data: recentConcerns, error: concernsError } = await supabaseAdmin
+      .from('work_concerns')
+      .select('id, title, status, priority, reported_by, work_item_id, created_at')
+      .in('work_item_id', workItemIds)
+      .order('created_at', { ascending: false })
+      .limit(8)
+
+    if (!concernsError && recentConcerns) {
+      for (const c of recentConcerns as any[]) {
+        const reporter = c.reported_by ? profileMap.get(c.reported_by) : null
+        const item = c.work_item_id ? workItemMap.get(c.work_item_id) : null
+        activityEvents.push({
+          id: c.id,
+          createdAt: c.created_at,
+          actorName: reporter ? `${reporter.first_name || ''} ${reporter.last_name || ''}`.trim() || reporter.email : 'Team Member',
+          workItemTitle: item?.title || 'Work Concern',
+          updateText: `Concern (${c.priority || 'MEDIUM'}): ${c.title} [${c.status}]`,
+          type: 'CONCERN',
+        })
+      }
+    }
+  }
+
+  activityEvents.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  const liveActivity = activityEvents.slice(0, 15)
 
   return {
     generatedAt: new Date().toISOString(),

@@ -330,17 +330,26 @@ export default function Projects() {
                   </select>
                 </div>
                 <div>
-                  <label className="block font-medium text-slate-700 mb-1">Methodology *</label>
+                  <label className="block font-medium text-slate-700 mb-1">Project Methodology *</label>
                   <select
                     value={form.methodology}
                     onChange={(e) =>
                       setForm({ ...form, methodology: e.target.value as 'SCRUM' | 'KANBAN' })
                     }
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-zinc-800 bg-white"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl outline-none focus:border-zinc-800 bg-white text-xs font-semibold"
                   >
                     <option value="SCRUM">SCRUM</option>
                     <option value="KANBAN">KANBAN</option>
                   </select>
+                  {form.methodology === 'SCRUM' ? (
+                    <p className="text-xs text-slate-500 mt-1">
+                      Plan work in sprints with defined sprint goals and deadlines.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-slate-500 mt-1">
+                      Manage continuous work through the workflow without sprints.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block font-medium text-slate-700 mb-1">Project Manager</label>
