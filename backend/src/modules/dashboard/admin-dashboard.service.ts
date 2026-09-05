@@ -355,10 +355,7 @@ export async function getEmployeeCapacity(
       `)
       .eq('organization_id', organizationId)
       .neq('status', 'DONE')
-<<<<<<< HEAD
-=======
       .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
->>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
 
   if (workError) {
     throw new Error(workError.message)
@@ -462,11 +459,7 @@ export async function getEmployeeCapacity(
   return (employees || [])
     .filter(
       (employee) =>
-<<<<<<< HEAD
-        employee.role === 'EMPLOYEE',
-=======
         ['EMPLOYEE', 'MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(employee.role),
->>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
     )
     .map((employee) => {
       const capacity =

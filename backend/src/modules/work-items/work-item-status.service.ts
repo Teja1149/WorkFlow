@@ -83,29 +83,13 @@ export async function transitionWorkItemStatus(
     throw new Error('A reason is required when sending work back.')
   }
 
-<<<<<<< HEAD
-  // Prevent completion if target quantity has not been reached, unless authorized override
-=======
-  // When marking as DONE, if target quantity is set, automatically fulfill completed quantity
->>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
+  // When marking as DONE, if target quantity is set, completed quantity is fulfilled
   if (nextStatus === 'DONE') {
     const targetQty = Number(work.target_quantity || 0)
     const completedQty = Number(work.completed_quantity || 0)
 
     if (targetQty > 0 && completedQty < targetQty) {
-<<<<<<< HEAD
-      const isOverride =
-        (action as any) === 'OVERRIDE_COMPLETE' ||
-        (notes && notes.toLowerCase().includes('override'))
-
-      if (!isOverride) {
-        throw new Error(
-          `Cannot mark work as complete: target quantity not reached (${completedQty} / ${targetQty} ${work.quantity_unit || 'items'}). Work must remain IN_PROGRESS until all units are completed.`,
-        )
-      }
-=======
       // Auto-complete all units upon marking DONE
->>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
     }
   }
 

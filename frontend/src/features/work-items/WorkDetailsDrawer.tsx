@@ -600,16 +600,10 @@ export default function WorkDetailsDrawer({
         actual_value: completionQty,
       })
 
-<<<<<<< HEAD
-      // 3. Update completed quantity on work item
-      await updateWorkItem(accessToken, work.id, {
-        completed_quantity: work.target_quantity ? Number(work.target_quantity) : actualValue,
-=======
       // 3. Update completed quantity on work item & mark DONE
       await updateWorkItem(accessToken, work.id, {
         completed_quantity: completionQty,
         status: 'DONE',
->>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
       })
 
       // 4. Mark work item DONE

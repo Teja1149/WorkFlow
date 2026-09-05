@@ -88,47 +88,6 @@ export async function getWorkItems(
   if (role === 'EMPLOYEE') {
     // Employee can ONLY see work assigned to them, cannot see anyone else's work
     query = query.eq('assigned_to', userId)
-<<<<<<< HEAD
-  } else if (role === 'MANAGER') {
-    const { data: employeeProfiles, error: employeeError } =
-      await supabaseAdmin
-        .from('profiles')
-        .select('id')
-        .eq('organization_id', organizationId)
-        .eq('role', 'EMPLOYEE')
-
-    if (employeeError) {
-      throw new Error(employeeError.message)
-    }
-
-    const employeeIds = (employeeProfiles || []).map(
-      (employee) => employee.id,
-    )
-
-    // Manager sees:
-    // 1. their own assigned work
-    // 2. work assigned to employees
-    // 3. unassigned work in the organization (for backlog / distribution)
-    const visibleIds = [...new Set([
-      userId,
-      ...employeeIds,
-    ])]
-
-    if (filters?.assigned_to) {
-      if (visibleIds.includes(filters.assigned_to)) {
-        query = query.eq('assigned_to', filters.assigned_to)
-      } else {
-        query = query.eq('assigned_to', userId)
-      }
-    } else if (!filters?.project_id) {
-      if (visibleIds.length > 0) {
-        query = query.or(`assigned_to.in.(${visibleIds.join(',')}),assigned_to.is.null`)
-      } else {
-        query = query.or(`assigned_to.eq.${userId},assigned_to.is.null`)
-      }
-    }
-=======
->>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
   } else {
     // Manager, Admin, Super Admin
     if (filters?.assigned_to) {
@@ -150,18 +109,6 @@ export async function getWorkItems(
     throw new Error(error.message)
   }
 
-<<<<<<< HEAD
-  return (data || []).map((item) => {
-    const pacing = calculateWorkItemPacing(item)
-    const pacingHealth = getPacingHealth(pacing.status)
-
-    return {
-      ...item,
-      pacing,
-      health: pacingHealth || item.health || null,
-    }
-  })
-=======
   return (data || [])
     .filter((item) => item.title !== 'PROJECT_DAILY_REPORT_TEMPLATE')
     .map((item) => {
@@ -174,7 +121,6 @@ export async function getWorkItems(
         health: pacingHealth || item.health || null,
       }
     })
->>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
 }
 
 export async function getWorkItemById(
@@ -265,35 +211,19 @@ export async function createWorkItem(
     module_id?: string | null
     milestone_id?: string | null
     assigned_to?: string | null
-<<<<<<< HEAD
-
-    // Project Target → Workboard linking
     project_target_id?: string | null
     target_unit_index?: number | null
-
-=======
-    project_target_id?: string | null
-    target_unit_index?: number | null
->>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
     title: string
     description?: string | null
     priority?: Priority
     start_date?: string | null
     deadline?: string | null
     deadline_time?: string | null
-<<<<<<< HEAD
-
-=======
->>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
     target_quantity?: number | null
     completed_quantity?: number | null
     quantity_unit?: string | null
     pacing_start_date?: string | null
     pacing_enabled?: boolean
-<<<<<<< HEAD
-
-=======
->>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
     estimated_hours?: number | null
     actual_hours?: number | null
     story_points?: number | null
