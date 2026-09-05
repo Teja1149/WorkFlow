@@ -444,13 +444,23 @@ export default function AdminWorkboard() {
         }
       })
 
-    // Sort by severity (Critical -> Red -> Orange -> Amber -> Green -> No Work)
-    return [...rawRows].sort(
-      (a, b) =>
+    // 1. Current logged-in user (Admin or Manager) always pinned at the top if present
+    // 2. Remaining rows sorted by severity (Critical -> Red -> Orange -> Amber -> Green -> No Work)
+    const currentUserId = profile?.id
+
+    return [...rawRows].sort((a, b) => {
+      const isAUser = Boolean(currentUserId && a.employee.id === currentUserId)
+      const isBUser = Boolean(currentUserId && b.employee.id === currentUserId)
+
+      if (isAUser && !isBUser) return -1
+      if (!isAUser && isBUser) return 1
+
+      return (
         severityScore(b.highestSeverity, b.current.length) -
-        severityScore(a.highestSeverity, a.current.length),
-    )
-  }, [employees, workItems, dailyTargets, capacities, companyDailyUpdates, search])
+        severityScore(a.highestSeverity, a.current.length)
+      )
+    })
+  }, [employees, workItems, dailyTargets, capacities, companyDailyUpdates, search, profile?.id])
 
   const summary = useMemo(() => {
     const active = workItems.filter((item) => item.status !== 'DONE')
@@ -577,6 +587,7 @@ export default function AdminWorkboard() {
               <EmployeeWorkRow
                 key={row.employee.id}
                 row={row}
+                isCurrentUser={Boolean(profile?.id && row.employee.id === profile.id)}
                 onEmployeeClick={() =>
                   navigate(`/employees/${row.employee.id}/work`)
                 }
@@ -704,11 +715,13 @@ function parseDailyReportUpdate(todayDailyUpdate: any) {
 
 function EmployeeWorkRow({
   row,
+  isCurrentUser,
   onEmployeeClick,
   onNewWork,
   onSelectWork,
 }: {
   row: EmployeeRow
+  isCurrentUser?: boolean
   onEmployeeClick: () => void
   onNewWork: () => void
   onSelectWork: (item: WorkItem) => void
@@ -746,9 +759,16 @@ function EmployeeWorkRow({
             </div>
 
             <div className="min-w-0 pt-0.5 flex-1">
-              <p className="truncate text-xs font-bold text-white group-hover:text-rose-300 transition-colors">
-                {fullName(row.employee)}
-              </p>
+              <div className="flex items-center gap-1.5 truncate">
+                <p className="truncate text-xs font-bold text-white group-hover:text-rose-300 transition-colors">
+                  {fullName(row.employee)}
+                </p>
+                {isCurrentUser && (
+                  <span className="text-[9px] font-black bg-[#801424] text-rose-100 px-1.5 py-0.2 rounded border border-rose-400/30 uppercase tracking-wider shrink-0">
+                    You
+                  </span>
+                )}
+              </div>
 
               <p className="mt-0.5 text-[11px] text-slate-400 font-medium">
                 {row.current.filter((item) => item.status !== 'DONE').length} active
