@@ -1,7 +1,8 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Layers } from 'lucide-react'
 import { useAuth } from '../features/auth/AuthContext'
+import LoadingCard from '../components/ui/LoadingCard'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -9,8 +10,27 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const { loginUser } = useAuth()
+  const { loginUser, accessToken, profile, loading } = useAuth()
   const navigate = useNavigate()
+
+  useEffect(() => {
+    if (!loading && accessToken && profile) {
+      const role = profile.role
+      if (role === 'SUPER_ADMIN' || role === 'ADMIN' || role === 'MANAGER') {
+        navigate('/admin-workboard', { replace: true })
+      } else {
+        navigate('/execution-board', { replace: true })
+      }
+    }
+  }, [loading, accessToken, profile, navigate])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center p-4">
+        <LoadingCard message="Checking workspace session..." />
+      </div>
+    )
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
