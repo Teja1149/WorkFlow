@@ -1,6 +1,7 @@
 import cron from 'node-cron'
 import { runWorkExecutionJob } from './work-execution.job.js'
 import { generateDailyRecurringWork } from '../modules/recurring-work/recurring-work.service.js'
+import { runDailyReportReminderJob } from '../modules/project-daily-reports/project-daily-report.service.js'
 
 let schedulerStarted = false
 
@@ -27,6 +28,7 @@ export function startScheduler() {
     '* * * * *',
     async () => {
       await runWorkExecutionJob()
+      await runDailyReportReminderJob()
     },
   )
 

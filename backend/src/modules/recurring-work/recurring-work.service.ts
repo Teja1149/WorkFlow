@@ -35,7 +35,7 @@ async function resolveEmployees(
     .eq('organization_id', organizationId)
 
   if (mode === 'ALL') {
-    query = query.in('role', ['EMPLOYEE', 'MANAGER'])
+    query = query.in('role', ['EMPLOYEE', 'MANAGER', 'ADMIN', 'SUPER_ADMIN'])
   } else {
     query = query.in('id', employeeIds)
   }
@@ -54,6 +54,10 @@ export async function createRecurringWorkTemplate(
 ) {
   if (!input.title?.trim()) {
     throw new Error('Recurring work title is required.')
+  }
+
+  if (input.title.trim().toUpperCase() === 'PROJECT_DAILY_REPORT_TEMPLATE') {
+    throw new Error('Daily Report Templates cannot be created as recurring work.')
   }
 
   if (!input.start_date) {
@@ -131,11 +135,14 @@ export async function listRecurringWorkTemplates(
     .from('recurring_work_templates')
     .select('*')
     .eq('organization_id', organizationId)
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
     .order('created_at', { ascending: false })
 
   if (error) throw new Error(error.message)
 
-  return data || []
+  return (data || []).filter(
+    (item) => item.title !== 'PROJECT_DAILY_REPORT_TEMPLATE',
+  )
 }
 
 export async function archiveRecurringWorkTemplate(
@@ -168,6 +175,7 @@ export async function generateDailyRecurringWork(
     .select('*')
     .eq('is_active', true)
     .eq('frequency', 'DAILY')
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
     .lte('start_date', date)
     .or(`end_date.is.null,end_date.gte.${date}`)
 
@@ -184,6 +192,14 @@ export async function generateDailyRecurringWork(
   const failed: string[] = []
 
   for (const template of templates || []) {
+    // 0. Explicit safeguard: Skip any daily report templates
+    if (
+      !template.title ||
+      template.title === 'PROJECT_DAILY_REPORT_TEMPLATE' ||
+      template.title.toUpperCase().includes('DAILY_REPORT_TEMPLATE')
+    ) {
+      continue
+    }
     // 1. Validate template.project_id before generating for employees
     if (template.project_id) {
       const { data: project, error: projectError } = await supabaseAdmin
@@ -461,3 +477,11 @@ export async function generateDailyRecurringWork(
     failures: failed,
   }
 }
+
+export async function syncMyDailyRecurringWork(
+  organizationId: string,
+  userId: string,
+) {
+  return await generateDailyRecurringWork(organizationId)
+}
+

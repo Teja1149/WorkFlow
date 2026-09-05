@@ -6,6 +6,7 @@ import {
   createRecurringWork,
   generateRecurringWork,
   listRecurringWork,
+  syncMyTodayRecurringWork,
 } from './recurring-work.controller.js'
 
 const router = Router()
@@ -31,6 +32,12 @@ router.post(
   generateRecurringWork,
 )
 
+router.post(
+  '/sync-my-today',
+  requireAuth,
+  syncMyTodayRecurringWork,
+)
+
 router.patch(
   '/:id/archive',
   requireAuth,
@@ -39,3 +46,4 @@ router.patch(
 )
 
 export default router
+

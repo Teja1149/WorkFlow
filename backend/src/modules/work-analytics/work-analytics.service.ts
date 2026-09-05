@@ -29,12 +29,13 @@ export async function getCompanyAnalytics(
       )
     `)
     .eq('organization_id', organizationId)
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   if (workError) {
     throw new Error(workError.message)
   }
 
-  const items = workItems || []
+  const items = (workItems || []).filter((i: any) => i.title !== 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   // Company Metrics Calculation (Step 152)
   const completed = items.filter((i: any) => i.status === 'DONE')
@@ -106,13 +107,14 @@ export async function getEmployeeAnalytics(
       created_at
     `)
     .eq('organization_id', organizationId)
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   if (workError) throw new Error(workError.message)
 
-  const items = workItems || []
+  const items = (workItems || []).filter((i: any) => i.title !== 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   return (employees || [])
-    .filter((e: any) => e.role === 'EMPLOYEE')
+    .filter((e: any) => ['EMPLOYEE', 'MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(e.role))
     .map((emp: any) => {
       const assigned = items.filter((i: any) => i.assigned_to === emp.id)
       const completed = assigned.filter((i: any) => i.status === 'DONE')
@@ -238,8 +240,9 @@ export async function getWorkTypeAnalytics(
     .from('work_items')
     .select('id, work_type_id, status, health, completed_at, deadline')
     .eq('organization_id', organizationId)
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
 
-  const items = workItems || []
+  const items = (workItems || []).filter((i: any) => i.title !== 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   return (workTypes || []).map((wt: any) => {
     const wtItems = items.filter((i: any) => i.work_type_id === wt.id)
@@ -337,12 +340,13 @@ export async function getBottlenecks(organizationId: string) {
       )
     `)
     .eq('organization_id', organizationId)
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   if (error) {
     throw new Error(error.message)
   }
 
-  const items = (workItems || []) as any[]
+  const items = ((workItems || []) as any[]).filter((i: any) => i.title !== 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   const moduleMap = new Map<
     string,
@@ -468,17 +472,19 @@ export async function getReassignmentRecommendations(organizationId: string) {
     `)
     .eq('organization_id', organizationId)
     .neq('status', 'DONE')
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   if (workError) {
     throw new Error(workError.message)
   }
 
+  const validWork = ((work || []) as any[]).filter((i: any) => i.title !== 'PROJECT_DAILY_REPORT_TEMPLATE')
   const capacityMap = new Map((capacity || []).map((row: any) => [row.employee_id, row]))
 
   const recommendations = []
 
   for (const employee of (employees || []) as any[]) {
-    const assigned = ((work || []) as any[]).filter(
+    const assigned = validWork.filter(
       (item) => item.assigned_to === employee.id,
     )
 

@@ -251,7 +251,9 @@ export default function ManagerDashboard() {
     load()
   }, [accessToken])
 
-  const items: WorkItem[] = dashboard?.workItems || []
+  const items: WorkItem[] = ((dashboard?.workItems || []) as WorkItem[]).filter(
+    (item: WorkItem) => item.title !== 'PROJECT_DAILY_REPORT_TEMPLATE' && !(item as any).is_template,
+  )
 
   const groups = useMemo(() => {
     const today = todayDate()

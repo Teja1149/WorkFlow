@@ -195,6 +195,11 @@ export function NotificationProvider({
         if (unhandledUnread) {
           showNotificationToast(unhandledUnread)
         }
+      } else if (!isInitialized.current) {
+        // Mark all initial historical notifications as handled so no sounds play on page refresh
+        for (const notif of parsedList) {
+          handledNotificationIds.current.add(notif.id)
+        }
       }
 
       setNotifications(parsedList)

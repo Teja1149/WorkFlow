@@ -5,6 +5,7 @@ import {
   notifyStakeholders,
   getDirectManagerId,
   getOrganizationStakeholderIds,
+  getRelevantManagementStakeholders,
 } from '../notifications/notification.service.js'
 import { NotificationType } from '../notifications/notification.types.js'
 import { refreshWorkHealth } from '../work-execution/work-execution.service.js'
@@ -82,7 +83,7 @@ export async function addConcern(
     `Reported a concern/blocker: ${concern.trim()}`,
   )
 
-  // Notify Manager / Creator / Assignee / Leadership
+  // Notify Manager / Leadership (exclude reporter)
   try {
     const { data: item } = await supabaseAdmin
       .from('work_items')
@@ -91,25 +92,14 @@ export async function addConcern(
       .single()
 
     if (item) {
-      const managerId = item.assigned_to
-        ? await getDirectManagerId(item.assigned_to, item.organization_id)
-        : null
-      const leadership = await getOrganizationStakeholderIds(
-        item.organization_id,
-        ['SUPER_ADMIN', 'ADMIN', 'MANAGER'],
-      )
+      const recipients = await getRelevantManagementStakeholders({
+        organizationId: item.organization_id,
+        assignedTo: item.assigned_to,
+        projectId: item.project_id,
+        authorUserId: userId,
+      })
 
-      const recipients = [
-        item.created_by,
-        item.assigned_to,
-        managerId,
-        ...leadership,
-      ].filter(
-        (id): id is string =>
-          Boolean(id) && id !== userId,
-      )
-
-      for (const recipientId of [...new Set(recipients)]) {
+      for (const recipientId of recipients) {
         try {
           await createNotification({
             userId: recipientId,

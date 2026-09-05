@@ -1,6 +1,11 @@
 import { supabaseAdmin } from '../../lib/supabase.js'
 
-export async function globalSearch(organizationId: string, query: string) {
+export async function globalSearch(
+  organizationId: string,
+  query: string,
+  role?: string,
+  userId?: string,
+) {
   const q = query.trim()
   if (!q) {
     return {
@@ -14,6 +19,18 @@ export async function globalSearch(organizationId: string, query: string) {
 
   const pattern = `%${q}%`
 
+  let workItemsQuery = supabaseAdmin
+    .from('work_items')
+    .select('id, title, status, priority, progress_percent, health')
+    .eq('organization_id', organizationId)
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
+    .ilike('title', pattern)
+    .limit(10)
+
+  if (role === 'EMPLOYEE' && userId) {
+    workItemsQuery = workItemsQuery.eq('assigned_to', userId)
+  }
+
   const [projectsRes, workItemsRes, employeesRes, milestonesRes, sprintsRes] =
     await Promise.all([
       supabaseAdmin
@@ -23,12 +40,7 @@ export async function globalSearch(organizationId: string, query: string) {
         .ilike('name', pattern)
         .limit(5),
 
-      supabaseAdmin
-        .from('work_items')
-        .select('id, title, status, priority, progress_percent, health')
-        .eq('organization_id', organizationId)
-        .ilike('title', pattern)
-        .limit(10),
+      workItemsQuery,
 
       supabaseAdmin
         .from('profiles')

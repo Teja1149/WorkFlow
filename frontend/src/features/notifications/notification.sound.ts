@@ -291,10 +291,28 @@ export function playWorkNotificationSound() {
   } catch {}
 }
 
+export const SOUND_ELIGIBLE_TYPES = new Set<string>([
+  'MESSAGE_RECEIVED',
+  'WORK_ASSIGNED',
+  'WORK_REASSIGNED',
+  'DEADLINE_APPROACHING',
+  'DEADLINE_URGENT',
+  'DEADLINE_CRITICAL',
+  'DEADLINE_WARNING',
+  'WORK_OVERDUE',
+  'CONCERN_REPORTED',
+  'DAILY_REPORT_REMINDER',
+])
+
 /**
  * Universal notification sound dispatcher based on notification type
+ * Strictly plays sounds ONLY for sound-eligible event types
  */
 export function playNotificationSound(type?: string) {
+  if (!type || !SOUND_ELIGIBLE_TYPES.has(type)) {
+    return
+  }
+
   if (type === NotificationType.MESSAGE_RECEIVED || type === 'MESSAGE_RECEIVED') {
     return playConversationNotificationSound()
   }

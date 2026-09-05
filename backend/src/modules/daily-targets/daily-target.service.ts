@@ -603,6 +603,7 @@ export async function getEmployeeDailyTargets(
     `)
     .eq('organization_id', organizationId)
     .eq('employee_id', employeeId)
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   if (date) {
     query = query.eq(
@@ -624,7 +625,11 @@ export async function getEmployeeDailyTargets(
     throw new Error(error.message)
   }
 
-  const targets = data || []
+  const targets = (data || []).filter(
+    (t) =>
+      t.title !== 'PROJECT_DAILY_REPORT_TEMPLATE' &&
+      t.work_items?.title !== 'PROJECT_DAILY_REPORT_TEMPLATE',
+  )
   return targets.map((t) => {
     const targetValue = Number(t.target_value || 0)
     const actualValue = Number(t.actual_value || 0)
@@ -700,6 +705,7 @@ export async function getTeamDailyTargets(
       `)
       .eq('organization_id', organizationId)
       .eq('deadline_date', targetDate)
+      .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
       .order('deadline_time', {
         ascending: true,
         nullsFirst: false,
@@ -709,7 +715,11 @@ export async function getTeamDailyTargets(
     throw new Error(error.message)
   }
 
-  const targets = data || []
+  const targets = (data || []).filter(
+    (target) =>
+      target.title !== 'PROJECT_DAILY_REPORT_TEMPLATE' &&
+      target.work_items?.title !== 'PROJECT_DAILY_REPORT_TEMPLATE',
+  )
 
   const enrichedTargets =
     targets.map((target) => {

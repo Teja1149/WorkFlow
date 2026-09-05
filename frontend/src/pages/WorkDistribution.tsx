@@ -637,9 +637,7 @@ export default function WorkDistribution() {
                   <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                     {employees
                       .filter((emp) =>
-                        profile?.role === 'MANAGER'
-                          ? emp.role === 'EMPLOYEE'
-                          : emp.role === 'EMPLOYEE' || emp.role === 'MANAGER',
+                        ['EMPLOYEE', 'MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(emp.role),
                       )
                       .map((emp) => {
                       const isSelected = selectedAssigneeId === emp.id

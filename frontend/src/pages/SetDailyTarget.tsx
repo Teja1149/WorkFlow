@@ -478,7 +478,7 @@ export default function SetDailyTarget() {
                 >
                   <option value="">Select team member</option>
                   {employees
-                    .filter((e) => e.role === 'EMPLOYEE' || !e.role)
+                    .filter((e) => ['EMPLOYEE', 'MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(e.role) || !e.role)
                     .map((emp) => (
                       <option key={emp.id} value={emp.id}>
                         {emp.first_name} {emp.last_name || ''} {emp.employee_id ? `(${emp.employee_id})` : ''}

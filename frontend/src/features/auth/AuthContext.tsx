@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react'
 import type { UserProfile } from './auth.types'
 import { getProfile, login } from './auth.service'
 import { supabase } from '../../lib/supabase'
+import { api } from '../../lib/api'
 
 const TOKEN_KEY = 'ewm_auth_token'
 
@@ -40,6 +41,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const userProfile = await getProfile(storedToken)
         setToken(storedToken)
         setProfile(userProfile)
+
+        // Sync daily recurring work for today (idempotent)
+        api('/recurring-work/sync-my-today', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${storedToken}` },
+        }).catch((err) => console.warn('[Recurring Work Sync error]:', err))
       } catch {
         localStorage.removeItem(TOKEN_KEY)
         localStorage.removeItem('ewm_access_token')
@@ -67,6 +74,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     setToken(result.session.access_token)
     setProfile(result.user)
+
+    // Sync daily recurring work for today (idempotent)
+    api('/recurring-work/sync-my-today', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${result.session.access_token}` },
+    }).catch((err) => console.warn('[Recurring Work Sync error]:', err))
+
     return result.user
   }
 

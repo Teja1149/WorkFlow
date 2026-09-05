@@ -74,13 +74,17 @@ export async function getManagerDashboard(
       )
     `)
     .in('project_id', projectIds)
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
     .order('created_at', { ascending: false })
 
   if (workError) {
     throw new Error(workError.message)
   }
 
-  const workItemIds = (workItems || []).map((w) => w.id)
+  const filteredWorkItems = (workItems || []).filter(
+    (w) => w.title !== 'PROJECT_DAILY_REPORT_TEMPLATE',
+  )
+  const workItemIds = filteredWorkItems.map((w) => w.id)
 
   // 3. Fetch recent updates
   const { data: updates } = workItemIds.length > 0
@@ -139,14 +143,14 @@ export async function getManagerDashboard(
   const uniqueMembers = new Set((members || []).map((m) => m.user_id))
   const today = new Date().toISOString().split('T')[0]
 
-  const activeWork = (workItems || []).filter((item) => item.status !== 'DONE').length
-  const overdue = (workItems || []).filter(
+  const activeWork = filteredWorkItems.filter((item) => item.status !== 'DONE').length
+  const overdue = filteredWorkItems.filter(
     (item) => item.deadline && item.deadline < today && item.status !== 'DONE',
   ).length
 
   return {
     projects: projects || [],
-    workItems: workItems || [],
+    workItems: filteredWorkItems,
     updates: updates || [],
     concerns: concerns || [],
     stats: {

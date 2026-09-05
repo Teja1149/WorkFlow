@@ -83,12 +83,17 @@ export async function transitionWorkItemStatus(
     throw new Error('A reason is required when sending work back.')
   }
 
+<<<<<<< HEAD
   // Prevent completion if target quantity has not been reached, unless authorized override
+=======
+  // When marking as DONE, if target quantity is set, automatically fulfill completed quantity
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
   if (nextStatus === 'DONE') {
     const targetQty = Number(work.target_quantity || 0)
     const completedQty = Number(work.completed_quantity || 0)
 
     if (targetQty > 0 && completedQty < targetQty) {
+<<<<<<< HEAD
       const isOverride =
         (action as any) === 'OVERRIDE_COMPLETE' ||
         (notes && notes.toLowerCase().includes('override'))
@@ -98,6 +103,9 @@ export async function transitionWorkItemStatus(
           `Cannot mark work as complete: target quantity not reached (${completedQty} / ${targetQty} ${work.quantity_unit || 'items'}). Work must remain IN_PROGRESS until all units are completed.`,
         )
       }
+=======
+      // Auto-complete all units upon marking DONE
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
     }
   }
 
@@ -194,6 +202,11 @@ export async function transitionWorkItemStatus(
   if (nextStatus === 'DONE') {
     updateData.progress_percent = 100
     updateData.completed_at = new Date().toISOString()
+    const targetQty = Number(work.target_quantity || 0)
+    const completedQty = Number(work.completed_quantity || 0)
+    if (targetQty > 0 && completedQty < targetQty) {
+      updateData.completed_quantity = targetQty
+    }
   }
 
   if (nextStatus === 'BLOCKED') {

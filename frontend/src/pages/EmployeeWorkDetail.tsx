@@ -66,9 +66,18 @@ export default function EmployeeWorkDetail() {
         getOrganizationWorkSettings(accessToken).catch(() => null),
         getEmployeeDailyTargets(accessToken, employeeId, todayStr).catch(() => []),
       ])
+      if (res && res.work) {
+        res.work = res.work.filter(
+          (w: any) => w.title !== 'PROJECT_DAILY_REPORT_TEMPLATE' && !w.is_template,
+        )
+      }
       setData(res)
       setSettings(workSettings)
-      setDailyTargets(Array.isArray(targets) ? targets : [])
+      setDailyTargets(
+        (Array.isArray(targets) ? targets : []).filter(
+          (t: any) => t.title !== 'PROJECT_DAILY_REPORT_TEMPLATE',
+        ),
+      )
     } catch (err) {
       setError(
         err instanceof Error

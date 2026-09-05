@@ -101,7 +101,14 @@ export default function WorkItemDrawer({
     setSubmitting(true)
     setError('')
     try {
-      await updateWorkItemStatus(accessToken, workItem.id, nextStatus, notes)
+      if (nextStatus === 'DONE' && workItem.target_quantity && Number(workItem.target_quantity) > 0) {
+        await updateWorkItem(accessToken, workItem.id, {
+          completed_quantity: Number(workItem.target_quantity),
+          status: 'DONE',
+        })
+      } else {
+        await updateWorkItemStatus(accessToken, workItem.id, nextStatus, notes)
+      }
       await onUpdated()
       if (nextStatus === 'DONE') {
         onClose()

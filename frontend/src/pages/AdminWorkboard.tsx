@@ -262,13 +262,25 @@ export default function AdminWorkboard() {
       setEmployees(
         Array.isArray(employeeData)
           ? employeeData.filter(
-              (emp: Employee) => emp.role === 'EMPLOYEE' || emp.role === 'MANAGER',
+              (emp: Employee) =>
+                ['EMPLOYEE', 'MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(emp.role || ''),
             )
           : [],
       )
 
-      setWorkItems(Array.isArray(workData) ? workData : [])
-      setDailyTargets(targetData?.targets || [])
+      const validWorkItems = (Array.isArray(workData) ? workData : []).filter(
+        (item: WorkItem) =>
+          item.title !== 'PROJECT_DAILY_REPORT_TEMPLATE' &&
+          !(item as any).is_template,
+      )
+      const validTargets = (targetData?.targets || []).filter(
+        (t: DailyTarget) =>
+          t.title !== 'PROJECT_DAILY_REPORT_TEMPLATE' &&
+          (t as any).work_items?.title !== 'PROJECT_DAILY_REPORT_TEMPLATE',
+      )
+
+      setWorkItems(validWorkItems)
+      setDailyTargets(validTargets)
       setProjects(Array.isArray(projectData) ? projectData : [])
       setWorkTypes(Array.isArray(workTypeData) ? workTypeData : [])
       setCompanyDailyUpdates(Array.isArray(dailyUpdatesData) ? dailyUpdatesData : [])
@@ -649,6 +661,47 @@ export default function AdminWorkboard() {
   )
 }
 
+function parseDailyReportUpdate(todayDailyUpdate: any) {
+  if (!todayDailyUpdate) return null
+
+  let paragraphText = todayDailyUpdate.paragraph_update || ''
+  const metrics: Array<{ label: string; value: string }> = []
+
+  // Check if values array exists (from legacy project_daily_update_values)
+  if (Array.isArray(todayDailyUpdate.values) && todayDailyUpdate.values.length > 0) {
+    todayDailyUpdate.values.forEach((v: any) => {
+      const label = v.project_update_fields?.field_name || v.field_name || 'Metric'
+      const val = v.value_text
+      if (val !== undefined && val !== null && val !== '') {
+        metrics.push({ label, value: String(val) })
+      }
+    })
+  }
+
+  // If paragraph_update is JSON (from structured project-daily-reports submission)
+  if (typeof paragraphText === 'string' && paragraphText.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(paragraphText)
+      if (Array.isArray(parsed.answers)) {
+        parsed.answers.forEach((a: any) => {
+          if (a.value !== undefined && a.value !== null && a.value !== '') {
+            const valStr = typeof a.value === 'boolean' ? (a.value ? 'Yes' : 'No') : String(a.value)
+            metrics.push({ label: a.label || a.field_key || 'Metric', value: valStr })
+          }
+        })
+      }
+      paragraphText = parsed.summary || parsed.notes || ''
+    } catch {}
+  }
+
+  return {
+    projectName: todayDailyUpdate.projects?.name || 'Daily Report',
+    progressPercent: todayDailyUpdate.progress_percent || 0,
+    metrics,
+    paragraphText,
+  }
+}
+
 function EmployeeWorkRow({
   row,
   onEmployeeClick,
@@ -660,6 +713,8 @@ function EmployeeWorkRow({
   onNewWork: () => void
   onSelectWork: (item: WorkItem) => void
 }) {
+  const parsedReport = parseDailyReportUpdate(row.todayDailyUpdate)
+
   return (
     <div className="bg-white hover:bg-slate-50/40 transition">
       <div className="grid grid-cols-[260px_minmax(0,1fr)_120px] min-h-47.5 items-stretch">
@@ -711,19 +766,31 @@ function EmployeeWorkRow({
 
           {/* TODAY'S DAILY REPORT TEMPLATE METRICS & OUTPUT */}
           <div className="mt-2.5 pt-2 border-t border-slate-800/80 text-[10px]">
+<<<<<<< HEAD
             {row.todayDailyUpdate ? (
+=======
+            {parsedReport ? (
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
               <div className="bg-emerald-950/60 border border-emerald-500/40 rounded-xl p-2.5 space-y-1.5 shadow-md">
                 <div className="flex items-center justify-between font-bold text-emerald-300 text-[9.5px]">
                   <span className="flex items-center gap-1.5 truncate max-w-35">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block shrink-0 animate-pulse"></span>
+<<<<<<< HEAD
                     <span className="truncate text-emerald-200">{row.todayDailyUpdate.projects?.name || 'Daily Report'}</span>
                   </span>
                   <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.2 rounded text-[8.5px] font-extrabold shrink-0">
                     {row.todayDailyUpdate.progress_percent || 0}%
+=======
+                    <span className="truncate text-emerald-200">{parsedReport.projectName}</span>
+                  </span>
+                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.2 rounded text-[8.5px] font-extrabold shrink-0">
+                    {parsedReport.progressPercent}%
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
                   </span>
                 </div>
 
                 {/* Submitted Dynamic Metrics (e.g. No of videos done, pending, etc.) */}
+<<<<<<< HEAD
                 {row.todayDailyUpdate.values && row.todayDailyUpdate.values.length > 0 && (
                   <div className="flex flex-wrap gap-1 pt-0.5">
                     {row.todayDailyUpdate.values.map((v: any, idx: number) => {
@@ -745,6 +812,24 @@ function EmployeeWorkRow({
                 {row.todayDailyUpdate.paragraph_update && (
                   <p className="text-slate-300 text-[9.5px] line-clamp-1 italic font-medium pt-0.5">
                     "{row.todayDailyUpdate.paragraph_update}"
+=======
+                {parsedReport.metrics.length > 0 && (
+                  <div className="flex flex-wrap gap-1 pt-0.5">
+                    {parsedReport.metrics.map((m, idx) => (
+                      <span
+                        key={idx}
+                        className="bg-slate-900/90 text-slate-200 px-1.5 py-0.5 rounded-md border border-emerald-500/30 text-[9px] font-semibold shadow-xs"
+                      >
+                        <strong className="text-emerald-300 font-bold">{m.label}:</strong> {m.value}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {parsedReport.paragraphText && (
+                  <p className="text-slate-300 text-[9.5px] line-clamp-1 italic font-medium pt-0.5">
+                    "{parsedReport.paragraphText}"
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
                   </p>
                 )}
               </div>

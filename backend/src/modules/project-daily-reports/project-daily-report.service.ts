@@ -9,11 +9,14 @@ import {
   type ReportAnswer,
 } from './project-daily-report.types.js'
 import {
+  createNotification,
+  notifyDailyReportSubmitted,
   notifyStakeholders,
   getDirectManagerId,
   getOrganizationStakeholderIds,
 } from '../notifications/notification.service.js'
 import { NotificationType } from '../notifications/notification.types.js'
+import { nowInTimezone, dateInTimezone } from '../../utils/timezone.js'
 
 const TEMPLATE_TITLE_KEY = 'PROJECT_DAILY_REPORT_TEMPLATE'
 
@@ -144,6 +147,7 @@ export async function saveProjectReportTemplate(
         title: TEMPLATE_TITLE_KEY,
         description: JSON.stringify(templatePayload),
         assignment_mode: 'ALL',
+        frequency: null,
         is_active: true,
         created_by: userId,
       })
@@ -154,7 +158,38 @@ export async function saveProjectReportTemplate(
     templateId = created.id
   }
 
+  // Purge any accidental work items or targets created for this template
+  await cleanupDailyReportWorkItems(organizationId, projectId)
+
   return (await getProjectReportTemplate(projectId))!
+}
+
+/**
+ * Helper to clean up any accidental work items or targets created for daily report templates
+ */
+export async function cleanupDailyReportWorkItems(
+  organizationId?: string,
+  projectId?: string,
+) {
+  try {
+    let targetQuery = supabaseAdmin
+      .from('daily_work_targets')
+      .delete()
+      .eq('title', TEMPLATE_TITLE_KEY)
+    if (organizationId) targetQuery = targetQuery.eq('organization_id', organizationId)
+    if (projectId) targetQuery = targetQuery.eq('project_id', projectId)
+    await targetQuery
+
+    let workQuery = supabaseAdmin
+      .from('work_items')
+      .delete()
+      .eq('title', TEMPLATE_TITLE_KEY)
+    if (organizationId) workQuery = workQuery.eq('organization_id', organizationId)
+    if (projectId) workQuery = workQuery.eq('project_id', projectId)
+    await workQuery
+  } catch (err) {
+    console.warn('[ProjectDailyReport] Failed to cleanup daily report work items:', err)
+  }
 }
 
 /**
@@ -247,31 +282,22 @@ export async function submitProjectDailyReport(
     throw new Error(error.message)
   }
 
-  // 4. Notify Manager & Leadership
+  // 4. Notify Manager & Leadership (excluding submitter)
   try {
     const [{ data: emp }, { data: proj }] = await Promise.all([
-      supabaseAdmin.from('profiles').select('first_name, last_name, manager_id').eq('id', employeeId).single(),
-      supabaseAdmin.from('projects').select('name, project_manager_id').eq('id', projectId).single(),
+      supabaseAdmin.from('profiles').select('first_name, last_name').eq('id', employeeId).single(),
+      supabaseAdmin.from('projects').select('name').eq('id', projectId).single(),
     ])
 
     const empName = emp ? `${emp.first_name} ${emp.last_name || ''}`.trim() : 'An employee'
     const projName = proj?.name || 'Project'
 
-    const managerId = emp?.manager_id || proj?.project_manager_id
-    const leadership = await getOrganizationStakeholderIds(organizationId, ['SUPER_ADMIN', 'ADMIN', 'MANAGER'])
-
-    const recipients = [managerId, ...leadership].filter(
-      (id): id is string => Boolean(id) && id !== employeeId,
-    )
-
-    await notifyStakeholders({
+    await notifyDailyReportSubmitted({
       organizationId,
+      submitterId: employeeId,
+      projectId,
       title: 'Daily Report Submitted',
       message: `${empName} submitted the daily report for "${projName}".`,
-      type: NotificationType.WORK_UPDATED,
-      projectId,
-      authorUserId: employeeId,
-      recipients,
     })
   } catch (notifErr) {
     console.error('[ProjectDailyReport] Notification failed:', notifErr)
@@ -541,3 +567,144 @@ export async function getEmployeePendingReports(
     }
   })
 }
+
+/**
+ * 5:45 PM Daily Report Reminder Job
+ * Evaluates each organization's timezone and sends a reminder at 5:45 PM (17:45)
+ * to users who have not yet submitted their required daily report for today.
+ * Deduplicated per user per project per day.
+ */
+export async function runDailyReportReminderJob(): Promise<{ remindersSent: number }> {
+  let remindersSent = 0
+
+  try {
+    const { data: orgs, error: orgErr } = await supabaseAdmin
+      .from('organizations')
+      .select('id, name')
+
+    if (orgErr || !orgs) {
+      return { remindersSent }
+    }
+
+    for (const org of orgs) {
+      try {
+        // Fetch organization timezone setting
+        const { data: orgSetting } = await supabaseAdmin
+          .from('organization_settings')
+          .select('timezone')
+          .eq('organization_id', org.id)
+          .maybeSingle()
+
+        const tz = orgSetting?.timezone || 'Asia/Kolkata'
+        const nowInTz = nowInTimezone(tz)
+        const todayStr = dateInTimezone(tz)
+
+        // Check if 5:45 PM (17:45) or later in org timezone
+        const isReminderTime =
+          nowInTz.hour > 17 || (nowInTz.hour === 17 && nowInTz.minute >= 45)
+
+        if (!isReminderTime) {
+          continue
+        }
+
+        // Find active templates for this organization
+        const { data: templates } = await supabaseAdmin
+          .from('recurring_work_templates')
+          .select('id, project_id')
+          .eq('organization_id', org.id)
+          .eq('title', TEMPLATE_TITLE_KEY)
+          .eq('is_active', true)
+
+        if (!templates || templates.length === 0) {
+          continue
+        }
+
+        const projectIds = templates.map((t) => t.project_id).filter(Boolean) as string[]
+        if (projectIds.length === 0) continue
+
+        // Fetch projects
+        const { data: projects } = await supabaseAdmin
+          .from('projects')
+          .select('id, name, status')
+          .in('id', projectIds)
+          .neq('status', 'COMPLETED')
+          .neq('status', 'ARCHIVED')
+
+        if (!projects || projects.length === 0) continue
+
+        for (const project of projects) {
+          // Fetch project members
+          const { data: members } = await supabaseAdmin
+            .from('project_members')
+            .select('user_id')
+            .eq('project_id', project.id)
+
+          if (!members || members.length === 0) continue
+
+          // Fetch submissions for today
+          const { data: submissions } = await supabaseAdmin
+            .from('project_daily_updates')
+            .select('employee_id')
+            .eq('project_id', project.id)
+            .eq('update_date', todayStr)
+
+          const submittedUserIds = new Set((submissions || []).map((s) => s.employee_id))
+
+          for (const member of members) {
+            if (submittedUserIds.has(member.user_id)) {
+              continue // Already submitted today
+            }
+
+            const alertKey = `daily-report-reminder-${member.user_id}-${project.id}-${todayStr}`
+
+            // Check if alert already recorded for today in work_item_deadline_alerts
+            const { data: existingAlert } = await supabaseAdmin
+              .from('work_item_deadline_alerts')
+              .select('id')
+              .eq('user_id', member.user_id)
+              .eq('alert_key', alertKey)
+              .maybeSingle()
+
+            if (existingAlert) {
+              continue // Already sent today
+            }
+
+            // Record alert
+            try {
+              await supabaseAdmin
+                .from('work_item_deadline_alerts')
+                .insert({
+                  organization_id: org.id,
+                  work_item_id: null,
+                  user_id: member.user_id,
+                  alert_key: alertKey,
+                  alert_type: NotificationType.DAILY_REPORT_REMINDER,
+                })
+            } catch (insErr) {
+              // Ignore unique constraint violation
+            }
+
+            // Send notification to pending user ONLY
+            await createNotification({
+              userId: member.user_id,
+              organizationId: org.id,
+              type: NotificationType.DAILY_REPORT_REMINDER,
+              title: 'Daily Report Reminder',
+              message: `Reminder: You have not submitted your daily report for "${project.name}" today. Please submit it before the workday ends.`,
+              projectId: project.id,
+            })
+
+            remindersSent++
+          }
+        }
+      } catch (orgProcessErr) {
+        console.warn(`[DailyReportReminder] Error for org ${org.id}:`, orgProcessErr)
+      }
+    }
+  } catch (err) {
+    console.error('[DailyReportReminder] Job error:', err)
+  }
+
+  return { remindersSent }
+}
+

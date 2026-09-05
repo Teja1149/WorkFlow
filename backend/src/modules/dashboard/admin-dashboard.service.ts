@@ -42,6 +42,7 @@ export async function getAdminDashboard(organizationId: string) {
       projects ( id, name, project_key )
     `)
     .eq('organization_id', organizationId)
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
     .order('created_at', { ascending: false })
 
   if (wErr) throw new Error(wErr.message)
@@ -68,6 +69,7 @@ export async function getAdminDashboard(organizationId: string) {
     `)
     .eq('organization_id', organizationId)
     .eq('deadline_date', today)
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   if (dtErr) console.warn('Daily targets query notice:', dtErr)
 
@@ -79,8 +81,8 @@ export async function getAdminDashboard(organizationId: string) {
 
   if (ptErr) console.warn('Project targets query notice:', ptErr)
 
-  const items = workItems || []
-  const targets = dailyTargets || []
+  const items = (workItems || []).filter((w) => w.title !== 'PROJECT_DAILY_REPORT_TEMPLATE')
+  const targets = (dailyTargets || []).filter((t) => t.title !== 'PROJECT_DAILY_REPORT_TEMPLATE')
   const allProjects = projects || []
   const allUsers = users || []
 
@@ -353,6 +355,10 @@ export async function getEmployeeCapacity(
       `)
       .eq('organization_id', organizationId)
       .neq('status', 'DONE')
+<<<<<<< HEAD
+=======
+      .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
 
   if (workError) {
     throw new Error(workError.message)
@@ -456,7 +462,11 @@ export async function getEmployeeCapacity(
   return (employees || [])
     .filter(
       (employee) =>
+<<<<<<< HEAD
         employee.role === 'EMPLOYEE',
+=======
+        ['EMPLOYEE', 'MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(employee.role),
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
     )
     .map((employee) => {
       const capacity =

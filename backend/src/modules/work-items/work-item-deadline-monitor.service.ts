@@ -1,5 +1,12 @@
 import { supabaseAdmin } from '../../lib/supabase.js'
+<<<<<<< HEAD
 import { createNotification } from '../notifications/notification.service.js'
+=======
+import {
+  createNotification,
+  getRelevantManagementStakeholders,
+} from '../notifications/notification.service.js'
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
 import {
   createDeadlineDateTime,
   getDeadlineState,
@@ -87,6 +94,10 @@ async function sendAlertOnce(
   alertKey: string,
   type:
     | 'DEADLINE_REMINDER'
+<<<<<<< HEAD
+=======
+    | 'DEADLINE_APPROACHING'
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
     | 'DEADLINE_WARNING'
     | 'DEADLINE_CRITICAL'
     | 'DEADLINE_URGENT'
@@ -282,12 +293,20 @@ export async function runDeadlineMonitor() {
           console.warn('Health update note:', updErr)
         }
 
+<<<<<<< HEAD
         // Tier 1: Alert Employee immediately
+=======
+        // Alert Assigned User when crossing deadline (1x)
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
         if (item.assigned_to) {
           const sent = await sendAlertOnce(
             item,
             item.assigned_to,
+<<<<<<< HEAD
             'overdue-employee',
+=======
+            `overdue-assigned-${item.id}`,
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
             'WORK_OVERDUE',
             'Work is overdue',
             `"${item.title}" has passed its deadline (${item.deadline} ${item.deadline_time || ''}). Please update progress immediately.`,
@@ -295,6 +314,7 @@ export async function runDeadlineMonitor() {
           if (sent) notificationsSent++
         }
 
+<<<<<<< HEAD
         // Tier 2: Alert Project Manager after 2 hours overdue
         if (hoursOverdue >= 2 && item.project_id) {
           const pmId = await getProjectManagerId(item.project_id)
@@ -306,11 +326,29 @@ export async function runDeadlineMonitor() {
               'WORK_ESCALATED',
               'Overdue work escalation',
               `"${item.title}" is overdue by ${Math.floor(hoursOverdue)} hours and requires managerial attention.`,
+=======
+        // Alert Relevant Admin & Manager when crossing deadline (1x)
+        const mgmtRecipients = await getRelevantManagementStakeholders({
+          organizationId: item.organization_id,
+          assignedTo: item.assigned_to,
+          projectId: item.project_id,
+        })
+        for (const mgmtId of mgmtRecipients) {
+          if (mgmtId !== item.assigned_to) {
+            const sent = await sendAlertOnce(
+              item,
+              mgmtId,
+              `overdue-mgmt-${mgmtId}-${item.id}`,
+              'WORK_OVERDUE',
+              'Work is overdue',
+              `"${item.title}" has passed its deadline (${item.deadline} ${item.deadline_time || ''}).`,
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
             )
             if (sent) notificationsSent++
           }
         }
 
+<<<<<<< HEAD
         // Tier 3: Alert Admins after 4 hours overdue
         if (hoursOverdue >= 4) {
           const adminIds = await getAdminIds(item.organization_id)
@@ -327,6 +365,68 @@ export async function runDeadlineMonitor() {
               if (sent) notificationsSent++
             }
           }
+=======
+        continue
+      }
+
+      const minutesRemaining = msRemaining / (1000 * 60)
+
+      // 2. 10 MINUTES BEFORE DEADLINE (<= 10 mins, > 0 mins) -> DEADLINE_URGENT (Assigned user only)
+      if (minutesRemaining <= 10 && minutesRemaining > 0) {
+        if (item.assigned_to) {
+          const sent = await sendAlertOnce(
+            item,
+            item.assigned_to,
+            `deadline-10m-${item.id}`,
+            'DEADLINE_URGENT',
+            '🔴 10 Minutes Remaining',
+            `"${item.title}" is due in less than 10 minutes! Please finish and submit your work.`,
+          )
+          if (sent) notificationsSent++
+        }
+
+        try {
+          await supabaseAdmin
+            .from('work_items')
+            .update({
+              health: 'RED',
+              escalation_level: 2,
+              updated_at: now.toISOString(),
+            })
+            .eq('id', item.id)
+        } catch (updErr) {
+          console.warn('Health update note:', updErr)
+        }
+
+        continue
+      }
+
+      // 3. 1 HOUR BEFORE DEADLINE (<= 60 mins, > 10 mins) -> DEADLINE_APPROACHING (Assigned user only)
+      if (minutesRemaining <= 60 && minutesRemaining > 10) {
+        if (item.assigned_to) {
+          const sent = await sendAlertOnce(
+            item,
+            item.assigned_to,
+            `deadline-1h-${item.id}`,
+            'DEADLINE_APPROACHING',
+            '⏳ 1 Hour Remaining',
+            `"${item.title}" is due in less than 1 hour. Please prepare deliverables.`,
+          )
+          if (sent) notificationsSent++
+        }
+
+        try {
+          await supabaseAdmin
+            .from('work_items')
+            .update({
+              health: 'RED',
+              escalation_level: 1,
+              updated_at: now.toISOString(),
+            })
+            .eq('id', item.id)
+        } catch (updErr) {
+          console.warn('Health update note:', updErr)
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
         }
 
         continue

@@ -12,7 +12,9 @@ export async function searchController(req: Request, res: Response) {
     }
 
     const query = String(req.query.q || '')
-    const data = await globalSearch(orgId, query)
+    const role = req.profile?.role
+    const userId = req.profile?.id
+    const data = await globalSearch(orgId, query, role, userId)
 
     return res.json({
       success: true,

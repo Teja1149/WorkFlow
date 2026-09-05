@@ -83,10 +83,12 @@ export async function getWorkItems(
       )
     `)
     .eq('organization_id', organizationId)
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   if (role === 'EMPLOYEE') {
     // Employee can ONLY see work assigned to them, cannot see anyone else's work
     query = query.eq('assigned_to', userId)
+<<<<<<< HEAD
   } else if (role === 'MANAGER') {
     const { data: employeeProfiles, error: employeeError } =
       await supabaseAdmin
@@ -125,8 +127,10 @@ export async function getWorkItems(
         query = query.or(`assigned_to.eq.${userId},assigned_to.is.null`)
       }
     }
+=======
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
   } else {
-    // Admin / Super Admin
+    // Manager, Admin, Super Admin
     if (filters?.assigned_to) {
       query = query.eq('assigned_to', filters.assigned_to)
     }
@@ -146,6 +150,7 @@ export async function getWorkItems(
     throw new Error(error.message)
   }
 
+<<<<<<< HEAD
   return (data || []).map((item) => {
     const pacing = calculateWorkItemPacing(item)
     const pacingHealth = getPacingHealth(pacing.status)
@@ -156,6 +161,20 @@ export async function getWorkItems(
       health: pacingHealth || item.health || null,
     }
   })
+=======
+  return (data || [])
+    .filter((item) => item.title !== 'PROJECT_DAILY_REPORT_TEMPLATE')
+    .map((item) => {
+      const pacing = calculateWorkItemPacing(item)
+      const pacingHealth = getPacingHealth(pacing.status)
+
+      return {
+        ...item,
+        pacing,
+        health: pacingHealth || item.health || null,
+      }
+    })
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
 }
 
 export async function getWorkItemById(
@@ -210,33 +229,10 @@ export async function getWorkItemById(
     `)
     .eq('organization_id', organizationId)
     .eq('id', workItemId)
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   if (role === 'EMPLOYEE') {
     query = query.eq('assigned_to', userId)
-  }
-
-  if (role === 'MANAGER') {
-    const { data: employeeProfiles, error: employeeError } =
-      await supabaseAdmin
-        .from('profiles')
-        .select('id')
-        .eq('organization_id', organizationId)
-        .eq('role', 'EMPLOYEE')
-
-    if (employeeError) {
-      throw new Error(employeeError.message)
-    }
-
-    const employeeIds = (employeeProfiles || []).map(
-      (employee) => employee.id,
-    )
-
-    const visibleIds = [...new Set([
-      userId,
-      ...employeeIds,
-    ])]
-
-    query = query.in('assigned_to', visibleIds)
   }
 
   const { data, error } = await query.maybeSingle()
@@ -245,7 +241,7 @@ export async function getWorkItemById(
     throw new Error(error.message)
   }
 
-  if (!data) {
+  if (!data || data.title === 'PROJECT_DAILY_REPORT_TEMPLATE') {
     throw new Error('Work item not found.')
   }
 
@@ -269,29 +265,43 @@ export async function createWorkItem(
     module_id?: string | null
     milestone_id?: string | null
     assigned_to?: string | null
+<<<<<<< HEAD
 
     // Project Target → Workboard linking
     project_target_id?: string | null
     target_unit_index?: number | null
 
+=======
+    project_target_id?: string | null
+    target_unit_index?: number | null
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
     title: string
-    description?: string
+    description?: string | null
     priority?: Priority
     start_date?: string | null
     deadline?: string | null
     deadline_time?: string | null
+<<<<<<< HEAD
 
+=======
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
     target_quantity?: number | null
     completed_quantity?: number | null
     quantity_unit?: string | null
     pacing_start_date?: string | null
     pacing_enabled?: boolean
+<<<<<<< HEAD
 
+=======
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
     estimated_hours?: number | null
     actual_hours?: number | null
     story_points?: number | null
   } = {} as any,
 ) {
+  if (input.title?.trim().toUpperCase() === 'PROJECT_DAILY_REPORT_TEMPLATE') {
+    throw new Error('Daily Report Templates cannot be created as work items.')
+  }
   if (input.work_type_id) {
     const { data: workType, error: workTypeError } =
       await supabaseAdmin
@@ -377,18 +387,9 @@ export async function createWorkItem(
       throw new Error('Assignee not found.')
     }
 
-    if (!['EMPLOYEE', 'MANAGER'].includes(assignee.role)) {
+    if (!['EMPLOYEE', 'MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(assignee.role)) {
       throw new Error(
-        'Work can only be assigned to an employee or manager.',
-      )
-    }
-
-    if (
-      role === 'MANAGER' &&
-      assignee.role !== 'EMPLOYEE'
-    ) {
-      throw new Error(
-        'Managers can only assign work to employees.',
+        'Work can only be assigned to an employee, manager, or admin.',
       )
     }
   }
@@ -609,18 +610,9 @@ export async function updateWorkItem(
       throw new Error('Assignee not found.')
     }
 
-    if (!['EMPLOYEE', 'MANAGER'].includes(assignee.role)) {
+    if (!['EMPLOYEE', 'MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(assignee.role)) {
       throw new Error(
-        'Work can only be assigned to an employee or manager.',
-      )
-    }
-
-    if (
-      role === 'MANAGER' &&
-      assignee.role !== 'EMPLOYEE'
-    ) {
-      throw new Error(
-        'Managers can only assign work to employees.',
+        'Work can only be assigned to an employee, manager, or admin.',
       )
     }
   }

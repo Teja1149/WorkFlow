@@ -23,13 +23,16 @@ export async function getEmployeeDashboard(
     `)
     .eq('organization_id', organizationId)
     .eq('assigned_to', employeeId)
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
     .order('created_at', { ascending: false })
 
   if (error) {
     throw new Error(error.message)
   }
 
-  const items = workItems || []
+  const items = (workItems || []).filter(
+    (item) => item.title !== 'PROJECT_DAILY_REPORT_TEMPLATE',
+  )
   const today = new Date().toISOString().split('T')[0]
   const inThreeDays = new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0]
 

@@ -1285,6 +1285,7 @@ export async function getEmployeeWorkDetail(
       `)
       .eq('organization_id', organizationId)
       .eq('assigned_to', employeeId)
+      .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
       .order('deadline', {
         ascending: true,
         nullsFirst: false,
@@ -1294,7 +1295,9 @@ export async function getEmployeeWorkDetail(
     throw new Error(workError.message)
   }
 
-  const items = work || []
+  const items = (work || []).filter(
+    (item) => item.title !== 'PROJECT_DAILY_REPORT_TEMPLATE',
+  )
 
   return {
     employee,
@@ -1623,10 +1626,15 @@ export async function getEmployeeCapacity(
       `)
       .eq('organization_id', organizationId)
       .neq('status', 'DONE')
+      .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   if (workError) {
     throw new Error(workError.message)
   }
+
+  const validWorkItems = (workItems || []).filter(
+    (item) => item.title !== 'PROJECT_DAILY_REPORT_TEMPLATE',
+  )
 
   const capacityMap = new Map(
     (capacityRows || []).map((row) => [
@@ -1649,7 +1657,7 @@ export async function getEmployeeCapacity(
           capacity?.daily_capacity_hours ?? 8,
         )
 
-      const assigned = (workItems || []).filter(
+      const assigned = validWorkItems.filter(
         (item) =>
           item.assigned_to === employee.id,
       )
@@ -1750,13 +1758,14 @@ export async function getEmployeeCapacity(
 export async function getAttentionCounts(organizationId: string) {
   const { data: items, error } = await supabaseAdmin
     .from('work_items')
-    .select('id, health, status')
+    .select('id, health, status, title')
     .eq('organization_id', organizationId)
     .neq('status', 'DONE')
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   if (error) throw new Error(error.message)
 
-  const active = items || []
+  const active = (items || []).filter((i: any) => i.title !== 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   const { data: concerns, error: concernError } = await supabaseAdmin
     .from('work_concerns')
@@ -1842,6 +1851,7 @@ export async function getLiveOverview(organizationId: string) {
       progress_percent
     `)
     .eq('organization_id', organizationId)
+    .neq('title', 'PROJECT_DAILY_REPORT_TEMPLATE')
 
   if (workError) {
     console.error('[getLiveOverview work items error]:', workError)
@@ -1849,7 +1859,9 @@ export async function getLiveOverview(organizationId: string) {
   }
 
   // In-memory mapping for relational consistency
-  const allWork = (rawWorkItems || []).map((w: any) => {
+  const allWork = (rawWorkItems || [])
+    .filter((w: any) => w.title !== 'PROJECT_DAILY_REPORT_TEMPLATE')
+    .map((w: any) => {
     const assignee = w.assigned_to ? profileMap.get(w.assigned_to) : null
     const project = w.project_id ? projectMap.get(w.project_id) : null
     return {

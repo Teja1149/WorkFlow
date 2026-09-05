@@ -271,8 +271,15 @@ export default function WorkItemDetails() {
   async function handleStatusChange(newStatus: WorkItem['status']) {
     if (!accessToken || !workItemId) return
     try {
-      const updated = await updateWorkItemStatus(accessToken, workItemId, newStatus)
-      setWorkItem((prev) => (prev ? { ...prev, ...updated } : prev))
+      if (newStatus === 'DONE' && workItem?.target_quantity && Number(workItem.target_quantity) > 0) {
+        await updateWorkItem(accessToken, workItemId, {
+          completed_quantity: Number(workItem.target_quantity),
+          status: 'DONE',
+        })
+      } else {
+        const updated = await updateWorkItemStatus(accessToken, workItemId, newStatus)
+        setWorkItem((prev) => (prev ? { ...prev, ...updated } : prev))
+      }
       await loadAllData()
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to update status.')
@@ -1179,9 +1186,7 @@ export default function WorkItemDetails() {
                   <option value="">Unassigned</option>
                   {employees
                     .filter((emp) =>
-                      profile?.role === 'MANAGER'
-                        ? emp.role === 'EMPLOYEE'
-                        : emp.role === 'EMPLOYEE' || emp.role === 'MANAGER',
+                      ['EMPLOYEE', 'MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(emp.role),
                     )
                     .map((emp) => (
                       <option key={emp.id} value={emp.id}>

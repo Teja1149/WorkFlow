@@ -136,8 +136,17 @@ async function request(
   return result.data
 }
 
+export function isRealWorkItem(item: any): boolean {
+  if (!item) return false
+  if (item.title === 'PROJECT_DAILY_REPORT_TEMPLATE') return false
+  if (typeof item.title === 'string' && item.title.toUpperCase().includes('DAILY_REPORT_TEMPLATE')) return false
+  if (item.is_template === true) return false
+  return true
+}
+
 export async function getWorkItems(token: string) {
-  return request(token, '/work-items') as Promise<WorkItem[]>
+  const data = await (request(token, '/work-items') as Promise<WorkItem[]>)
+  return (Array.isArray(data) ? data : []).filter(isRealWorkItem)
 }
 
 export async function getWorkItem(

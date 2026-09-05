@@ -577,16 +577,18 @@ export default function WorkDetailsDrawer({
     setError('')
 
     try {
+      const targetQty = work.target_quantity ? Number(work.target_quantity) : targetNum
+      const completionQty = Math.max(targetQty, actualValue || 1)
       const notesVal = reportValues.notes || reportValues.comment || ''
       const blockerVal = reportValues.blocker || ''
-      const summaryText = `Completed ${actualValue} / ${targetNum} ${unit}.${
+      const summaryText = `Completed ${completionQty} / ${targetQty} ${unit}.${
         notesVal ? ` Notes: ${notesVal}` : ''
       }${blockerVal ? ` Blocker: ${blockerVal}` : ''}`
 
       // 1. Save linked target with full actual output
       if (linkedTarget) {
         await updateDailyTargetResult(accessToken, linkedTarget.id, {
-          actual_value: actualValue,
+          actual_value: completionQty,
           result_note: summaryText.trim() || undefined,
         })
       }
@@ -595,12 +597,19 @@ export default function WorkDetailsDrawer({
       await addWorkUpdate(accessToken, work.id, {
         update_text: summaryText,
         report_data: reportValues,
-        actual_value: actualValue,
+        actual_value: completionQty,
       })
 
+<<<<<<< HEAD
       // 3. Update completed quantity on work item
       await updateWorkItem(accessToken, work.id, {
         completed_quantity: work.target_quantity ? Number(work.target_quantity) : actualValue,
+=======
+      // 3. Update completed quantity on work item & mark DONE
+      await updateWorkItem(accessToken, work.id, {
+        completed_quantity: completionQty,
+        status: 'DONE',
+>>>>>>> 4047dda (Deploy V2 with work tracking, targets, deadlines and manager access)
       })
 
       // 4. Mark work item DONE
@@ -1019,7 +1028,7 @@ export default function WorkDetailsDrawer({
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         onClick={handleCompleteWork}
-                        disabled={submitting || !canComplete}
+                        disabled={submitting}
                         className="rounded-xl bg-emerald-600 px-4 py-3 text-xs font-black text-white hover:bg-emerald-700 disabled:opacity-50 cursor-pointer shadow-xs transition flex items-center justify-center gap-1.5"
                       >
                         <CheckCircle2 size={14} />

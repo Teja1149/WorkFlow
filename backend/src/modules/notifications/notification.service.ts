@@ -230,6 +230,72 @@ export async function notifyWorkStakeholders(input: {
   }
 }
 
+export async function getProjectManagerId(
+  projectId: string,
+  organizationId: string,
+): Promise<string | null> {
+  if (!projectId) return null
+  try {
+    const { data } = await supabaseAdmin
+      .from('projects')
+      .select('project_manager_id')
+      .eq('id', projectId)
+      .eq('organization_id', organizationId)
+      .maybeSingle()
+    return data?.project_manager_id || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Resolves the relevant management & supervisors for a task/project:
+ * - Direct Manager of the assigned user
+ * - Project Manager (if project-based)
+ * - Organization Admins & Super Admins
+ */
+export async function getRelevantManagementStakeholders(input: {
+  organizationId: string
+  assignedTo?: string | null
+  projectId?: string | null
+  authorUserId?: string
+}): Promise<string[]> {
+  const recipients = new Set<string>()
+
+  // 1. Direct manager of the worker
+  if (input.assignedTo) {
+    const directManagerId = await getDirectManagerId(input.assignedTo, input.organizationId)
+    if (directManagerId) recipients.add(directManagerId)
+  }
+
+  // 2. Project manager of the project
+  if (input.projectId) {
+    const pmId = await getProjectManagerId(input.projectId, input.organizationId)
+    if (pmId) recipients.add(pmId)
+  }
+
+  // 3. Organization leadership (Admins and Super Admins)
+  const admins = await getOrganizationStakeholderIds(input.organizationId, [
+    'SUPER_ADMIN',
+    'ADMIN',
+  ])
+  for (const id of admins) {
+    recipients.add(id)
+  }
+
+  // 4. Sender must never receive a notification for their own action
+  if (input.authorUserId) {
+    recipients.delete(input.authorUserId)
+  }
+
+  return Array.from(recipients)
+}
+
+/**
+ * PART 3: NEW TASK ASSIGNMENT
+ * Only the assigned user receives the task assignment notification.
+ * Senders, creators, and other users are excluded.
+ */
 export async function notifyWorkAssignment(input: {
   organizationId: string
   workItemId: string
@@ -240,54 +306,32 @@ export async function notifyWorkAssignment(input: {
   assignedTo?: string | null
   createdBy?: string | null
 }) {
-  const recipients = new Set<string>()
+  if (!input.assignedTo) return
+  // Exclude self-assignment from notification spam
+  if (input.authorUserId && input.assignedTo === input.authorUserId) return
 
-  if (input.assignedTo) {
-    recipients.add(input.assignedTo)
-    const managerId = await getDirectManagerId(input.assignedTo, input.organizationId)
-    if (managerId) {
-      recipients.add(managerId)
-    }
-  }
-
-  if (input.createdBy) {
-    recipients.add(input.createdBy)
-  }
-
-  // Include admins and managers
-  const leadership = await getOrganizationStakeholderIds(input.organizationId, [
-    'SUPER_ADMIN',
-    'ADMIN',
-    'MANAGER',
-  ])
-  for (const id of leadership) {
-    recipients.add(id)
-  }
-
-  if (input.authorUserId) {
-    recipients.delete(input.authorUserId)
-  }
-
-  for (const recipientId of recipients) {
-    try {
-      await createNotification({
-        userId: recipientId,
-        organizationId: input.organizationId,
-        type: NotificationType.WORK_ASSIGNED,
-        title: input.title,
-        message: input.message,
-        workItemId: input.workItemId,
-        projectId: input.projectId,
-      })
-    } catch (error) {
-      console.error(
-        `Failed to notify work assignment recipient ${recipientId}:`,
-        error,
-      )
-    }
+  try {
+    await createNotification({
+      userId: input.assignedTo,
+      organizationId: input.organizationId,
+      type: NotificationType.WORK_ASSIGNED,
+      title: input.title,
+      message: input.message,
+      workItemId: input.workItemId,
+      projectId: input.projectId,
+    })
+  } catch (error) {
+    console.error(
+      `Failed to notify work assignment recipient ${input.assignedTo}:`,
+      error,
+    )
   }
 }
 
+/**
+ * TASK REASSIGNMENT
+ * Notifies the new assigned user (and previous assignee if different), excluding author.
+ */
 export async function notifyWorkReassignment(input: {
   organizationId: string
   workItemId: string
@@ -301,33 +345,12 @@ export async function notifyWorkReassignment(input: {
 }) {
   const recipients = new Set<string>()
 
-  if (input.previousAssignedTo) {
-    recipients.add(input.previousAssignedTo)
-    const prevManager = await getDirectManagerId(input.previousAssignedTo, input.organizationId)
-    if (prevManager) recipients.add(prevManager)
-  }
-
-  if (input.newAssignedTo) {
+  if (input.newAssignedTo && input.newAssignedTo !== input.authorUserId) {
     recipients.add(input.newAssignedTo)
-    const newManager = await getDirectManagerId(input.newAssignedTo, input.organizationId)
-    if (newManager) recipients.add(newManager)
   }
 
-  if (input.createdBy) {
-    recipients.add(input.createdBy)
-  }
-
-  const leadership = await getOrganizationStakeholderIds(input.organizationId, [
-    'SUPER_ADMIN',
-    'ADMIN',
-    'MANAGER',
-  ])
-  for (const id of leadership) {
-    recipients.add(id)
-  }
-
-  if (input.authorUserId) {
-    recipients.delete(input.authorUserId)
+  if (input.previousAssignedTo && input.previousAssignedTo !== input.authorUserId) {
+    recipients.add(input.previousAssignedTo)
   }
 
   for (const recipientId of recipients) {
@@ -350,6 +373,51 @@ export async function notifyWorkReassignment(input: {
   }
 }
 
+/**
+ * PART 4: WORK STATUS UPDATES
+ * Notifies relevant Admin(s) and Manager(s) responsible for monitoring the work.
+ * Excludes the author/updater and unrelated employees.
+ */
+export async function notifyWorkStatusChange(input: {
+  organizationId: string
+  workItemId: string
+  projectId?: string | null
+  title: string
+  message: string
+  authorUserId?: string
+  assignedTo?: string | null
+}) {
+  const recipients = await getRelevantManagementStakeholders({
+    organizationId: input.organizationId,
+    assignedTo: input.assignedTo,
+    projectId: input.projectId,
+    authorUserId: input.authorUserId,
+  })
+
+  for (const recipientId of recipients) {
+    try {
+      await createNotification({
+        userId: recipientId,
+        organizationId: input.organizationId,
+        type: 'STATUS_CHANGED',
+        title: input.title,
+        message: input.message,
+        workItemId: input.workItemId,
+        projectId: input.projectId,
+      })
+    } catch (error) {
+      console.error(
+        `Failed to notify status change recipient ${recipientId}:`,
+        error,
+      )
+    }
+  }
+}
+
+/**
+ * PART 4 & 5: WORK COMPLETED
+ * Notifies relevant Admin(s) and Manager(s), excluding the person who completed the work.
+ */
 export async function notifyWorkCompleted(input: {
   organizationId: string
   workItemId: string
@@ -360,29 +428,12 @@ export async function notifyWorkCompleted(input: {
   assignedTo?: string | null
   createdBy?: string | null
 }) {
-  const recipients = new Set<string>()
-
-  if (input.createdBy) {
-    recipients.add(input.createdBy)
-  }
-
-  if (input.assignedTo) {
-    const managerId = await getDirectManagerId(input.assignedTo, input.organizationId)
-    if (managerId) recipients.add(managerId)
-  }
-
-  const leadership = await getOrganizationStakeholderIds(input.organizationId, [
-    'SUPER_ADMIN',
-    'ADMIN',
-    'MANAGER',
-  ])
-  for (const id of leadership) {
-    recipients.add(id)
-  }
-
-  if (input.authorUserId) {
-    recipients.delete(input.authorUserId)
-  }
+  const recipients = await getRelevantManagementStakeholders({
+    organizationId: input.organizationId,
+    assignedTo: input.assignedTo,
+    projectId: input.projectId,
+    authorUserId: input.authorUserId,
+  })
 
   for (const recipientId of recipients) {
     try {
@@ -404,6 +455,10 @@ export async function notifyWorkCompleted(input: {
   }
 }
 
+/**
+ * WORK SENT BACK
+ * Notifies the assigned user and relevant management, excluding author.
+ */
 export async function notifyWorkSentBack(input: {
   organizationId: string
   workItemId: string
@@ -416,26 +471,19 @@ export async function notifyWorkSentBack(input: {
 }) {
   const recipients = new Set<string>()
 
-  if (input.assignedTo) {
+  if (input.assignedTo && input.assignedTo !== input.authorUserId) {
     recipients.add(input.assignedTo)
-    const managerId = await getDirectManagerId(input.assignedTo, input.organizationId)
-    if (managerId) recipients.add(managerId)
   }
 
-  if (input.createdBy) {
-    recipients.add(input.createdBy)
-  }
+  const management = await getRelevantManagementStakeholders({
+    organizationId: input.organizationId,
+    assignedTo: input.assignedTo,
+    projectId: input.projectId,
+    authorUserId: input.authorUserId,
+  })
 
-  const leadership = await getOrganizationStakeholderIds(input.organizationId, [
-    'SUPER_ADMIN',
-    'ADMIN',
-  ])
-  for (const id of leadership) {
+  for (const id of management) {
     recipients.add(id)
-  }
-
-  if (input.authorUserId) {
-    recipients.delete(input.authorUserId)
   }
 
   for (const recipientId of recipients) {
@@ -452,6 +500,43 @@ export async function notifyWorkSentBack(input: {
     } catch (error) {
       console.error(
         `Failed to notify work sent back recipient ${recipientId}:`,
+        error,
+      )
+    }
+  }
+}
+
+/**
+ * PART 6: DAILY REPORT SUBMITTED
+ * Notifies relevant Admin(s) and Manager(s), excluding the submitter.
+ */
+export async function notifyDailyReportSubmitted(input: {
+  organizationId: string
+  submitterId: string
+  title: string
+  message: string
+  projectId?: string | null
+}) {
+  const recipients = await getRelevantManagementStakeholders({
+    organizationId: input.organizationId,
+    assignedTo: input.submitterId,
+    projectId: input.projectId,
+    authorUserId: input.submitterId,
+  })
+
+  for (const recipientId of recipients) {
+    try {
+      await createNotification({
+        userId: recipientId,
+        organizationId: input.organizationId,
+        type: NotificationType.DAILY_REPORT_SUBMITTED,
+        title: input.title,
+        message: input.message,
+        projectId: input.projectId,
+      })
+    } catch (error) {
+      console.error(
+        `Failed to notify daily report submission recipient ${recipientId}:`,
         error,
       )
     }
