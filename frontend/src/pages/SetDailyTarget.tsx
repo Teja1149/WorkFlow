@@ -247,13 +247,7 @@ export default function SetDailyTarget() {
 
     try {
       if (workSource === 'NEW') {
-        // Step 169 & 170 — Combined Creation
-        if (!form.project_id) {
-          setError('Project is required to create a new linked work item.')
-          setSaving(false)
-          return
-        }
-
+        // Combined Creation (Project or Standalone)
         if (!form.work_title.trim()) {
           setError('Work title is required.')
           setSaving(false)
@@ -262,10 +256,10 @@ export default function SetDailyTarget() {
 
         await createDailyTargetWithWorkItem(accessToken, {
           employee_id: form.employee_id,
-          project_id: form.project_id,
-          module_id: form.module_id || null,
-          milestone_id: form.milestone_id || null,
-          sprint_id: form.sprint_id || null,
+          project_id: form.project_id || null,
+          module_id: form.project_id ? (form.module_id || null) : null,
+          milestone_id: form.project_id ? (form.milestone_id || null) : null,
+          sprint_id: form.project_id ? (form.sprint_id || null) : null,
           work_type_id: form.work_type_id || null,
 
           work_title: form.work_title.trim(),

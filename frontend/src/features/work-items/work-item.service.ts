@@ -5,7 +5,7 @@ const API_URL = import.meta.env.VITE_API_URL || '/api'
 export interface WorkItem {
   id: string
   organization_id: string
-  project_id: string
+  project_id: string | null
   work_type_id: string | null
   module_id?: string | null
   milestone_id: string | null
@@ -159,7 +159,7 @@ export async function getWorkItem(
 export async function createWorkItem(
   token: string,
   data: {
-    project_id: string
+    project_id?: string | null
     work_type_id?: string | null
     module_id?: string | null
     milestone_id?: string | null
@@ -338,4 +338,11 @@ export async function resolveWorkConcern(
     body: payload ? JSON.stringify(payload) : undefined,
   })
 }
+
+export async function deleteWorkItem(token: string, workItemId: string) {
+  return request(token, `/work-items/${workItemId}`, {
+    method: 'DELETE',
+  })
+}
+
 

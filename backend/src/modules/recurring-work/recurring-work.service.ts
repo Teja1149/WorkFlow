@@ -269,7 +269,7 @@ export async function generateDailyRecurringWork(
           .from('work_items')
           .insert({
             organization_id: template.organization_id,
-            project_id: template.project_id,
+            project_id: template.project_id || null,
             assigned_to: employee.id,
             created_by: template.created_by,
             title: template.title,
@@ -279,9 +279,9 @@ export async function generateDailyRecurringWork(
             deadline: date,
             deadline_time: template.deadline_time,
             original_deadline: date,
-            work_type_id: template.work_type_id,
-            module_id: template.module_id,
-            milestone_id: template.milestone_id,
+            work_type_id: template.work_type_id || null,
+            module_id: template.project_id ? (template.module_id || null) : null,
+            milestone_id: template.project_id ? (template.milestone_id || null) : null,
             recurring_template_id: template.id,
             progress_percent: 0,
             estimated_hours: 0,
@@ -390,9 +390,9 @@ export async function generateDailyRecurringWork(
         .insert({
           organization_id: template.organization_id,
           employee_id: employee.id,
-          project_id: template.project_id,
-          module_id: template.module_id,
-          milestone_id: template.milestone_id,
+          project_id: template.project_id || null,
+          module_id: template.project_id ? (template.module_id || null) : null,
+          milestone_id: template.project_id ? (template.milestone_id || null) : null,
           work_item_id: work.id,
 
           title: template.title,

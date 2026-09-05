@@ -24,6 +24,7 @@ import {
   PauseCircle,
   PlayCircle,
   Plus,
+  Trash2,
 } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import {
@@ -31,6 +32,7 @@ import {
   addWorkUpdate,
   updateWorkItemStatus,
   updateWorkItem,
+  deleteWorkItem,
   type WorkItem,
   type AddWorkUpdateInput,
 } from './work-item.service'
@@ -619,6 +621,27 @@ export default function WorkDetailsDrawer({
     }
   }
 
+  // DELETE WORK (Admin / Manager only)
+  async function handleDeleteWork() {
+    if (!accessToken) return
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${work.title}"? This will remove all associated target and progress tracking.`,
+    )
+    if (!confirmed) return
+
+    setSubmitting(true)
+    setError('')
+    try {
+      await deleteWorkItem(accessToken, work.id)
+      setSuccessMsg('✓ Work item deleted.')
+      await onChanged()
+      setTimeout(onClose, 300)
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete work item.')
+      setSubmitting(false)
+    }
+  }
+
   // Assignee display name
   const currentAssigneeName = useMemo(() => {
     const emp = employees.find((e) => e.id === (assignedTo || work.assigned_to))
@@ -673,6 +696,7 @@ export default function WorkDetailsDrawer({
               </div>
 
               <button
+                type="button"
                 onClick={onClose}
                 className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 cursor-pointer"
               >
@@ -1009,21 +1033,35 @@ export default function WorkDetailsDrawer({
                 {/* BOTTOM ACTION BUTTONS: Start Work / Complete Work / Mark Blocked / Resume Work */}
                 <div className="pt-1">
                   {work.status === 'TODO' && (
-                    <button
-                      onClick={() => handleStatusTransition('IN_PROGRESS')}
-                      disabled={submitting}
-                      className="w-full rounded-xl bg-[#801424] px-4 py-3 text-xs font-black text-white hover:bg-[#9f1239] disabled:opacity-50 cursor-pointer shadow-xs transition"
-                    >
-                      Start Work
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleStatusTransition('IN_PROGRESS')}
+                        disabled={submitting}
+                        className="flex-1 rounded-xl bg-[#801424] px-4 py-3 text-xs font-black text-white hover:bg-[#9f1239] disabled:opacity-50 cursor-pointer shadow-xs transition"
+                      >
+                        Start Work
+                      </button>
+                      {isManagerOrAdmin && (
+                        <button
+                          type="button"
+                          onClick={handleDeleteWork}
+                          disabled={submitting}
+                          title="Delete Work Item"
+                          className="rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 px-3.5 py-3 text-xs font-black disabled:opacity-50 cursor-pointer transition flex items-center justify-center gap-1"
+                        >
+                          <Trash2 size={14} />
+                          <span>Delete</span>
+                        </button>
+                      )}
+                    </div>
                   )}
 
                   {work.status === 'IN_PROGRESS' && (
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="flex items-center gap-2">
                       <button
                         onClick={handleCompleteWork}
                         disabled={submitting}
-                        className="rounded-xl bg-emerald-600 px-4 py-3 text-xs font-black text-white hover:bg-emerald-700 disabled:opacity-50 cursor-pointer shadow-xs transition flex items-center justify-center gap-1.5"
+                        className="flex-1 rounded-xl bg-emerald-600 px-4 py-3 text-xs font-black text-white hover:bg-emerald-700 disabled:opacity-50 cursor-pointer shadow-xs transition flex items-center justify-center gap-1.5"
                       >
                         <CheckCircle2 size={14} />
                         <span>Complete Work</span>
@@ -1032,28 +1070,69 @@ export default function WorkDetailsDrawer({
                       <button
                         onClick={() => handleStatusTransition('BLOCKED')}
                         disabled={submitting}
-                        className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-black text-amber-900 hover:bg-amber-100 disabled:opacity-50 cursor-pointer transition"
+                        className="flex-1 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-black text-amber-900 hover:bg-amber-100 disabled:opacity-50 cursor-pointer transition text-center"
                       >
                         Mark Blocked
                       </button>
+
+                      {isManagerOrAdmin && (
+                        <button
+                          type="button"
+                          onClick={handleDeleteWork}
+                          disabled={submitting}
+                          title="Delete Work Item"
+                          className="rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 px-3.5 py-3 text-xs font-black disabled:opacity-50 cursor-pointer transition flex items-center justify-center gap-1"
+                        >
+                          <Trash2 size={14} />
+                          <span>Delete</span>
+                        </button>
+                      )}
                     </div>
                   )}
 
                   {work.status === 'BLOCKED' && (
-                    <button
-                      onClick={() => handleStatusTransition('IN_PROGRESS')}
-                      disabled={submitting}
-                      className="w-full rounded-xl bg-[#801424] px-4 py-3 text-xs font-black text-white hover:bg-[#9f1239] disabled:opacity-50 cursor-pointer shadow-xs transition flex items-center justify-center gap-1.5"
-                    >
-                      <Play size={14} />
-                      <span>Resume Work</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleStatusTransition('IN_PROGRESS')}
+                        disabled={submitting}
+                        className="flex-1 rounded-xl bg-[#801424] px-4 py-3 text-xs font-black text-white hover:bg-[#9f1239] disabled:opacity-50 cursor-pointer shadow-xs transition flex items-center justify-center gap-1.5"
+                      >
+                        <Play size={14} />
+                        <span>Resume Work</span>
+                      </button>
+                      {isManagerOrAdmin && (
+                        <button
+                          type="button"
+                          onClick={handleDeleteWork}
+                          disabled={submitting}
+                          title="Delete Work Item"
+                          className="rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 px-3.5 py-3 text-xs font-black disabled:opacity-50 cursor-pointer transition flex items-center justify-center gap-1"
+                        >
+                          <Trash2 size={14} />
+                          <span>Delete</span>
+                        </button>
+                      )}
+                    </div>
                   )}
 
                   {work.status === 'DONE' && (
-                    <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-center text-emerald-800 font-bold text-xs flex items-center justify-center gap-2">
-                      <CheckCircle2 size={15} className="text-emerald-600" />
-                      <span>✓ Completed</span>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-center text-emerald-800 font-bold text-xs flex items-center justify-center gap-2">
+                        <CheckCircle2 size={15} className="text-emerald-600" />
+                        <span>✓ Completed</span>
+                      </div>
+                      {isManagerOrAdmin && (
+                        <button
+                          type="button"
+                          onClick={handleDeleteWork}
+                          disabled={submitting}
+                          title="Delete Work Item"
+                          className="rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 px-3.5 py-3 text-xs font-black disabled:opacity-50 cursor-pointer transition flex items-center justify-center gap-1"
+                        >
+                          <Trash2 size={14} />
+                          <span>Delete</span>
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

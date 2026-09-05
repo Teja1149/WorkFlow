@@ -272,7 +272,7 @@ export default function WorkItems() {
       }
 
       const createdWork = await createWorkItem(accessToken, {
-        project_id: form.project_id,
+        project_id: form.project_id || null,
         work_type_id: form.work_type_id || null,
         module_id: form.module_id || null,
         milestone_id: form.milestone_id || null,

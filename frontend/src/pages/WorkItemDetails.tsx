@@ -13,12 +13,14 @@ import {
   X,
   CheckCircle2,
   MessageSquare,
+  Trash2,
 } from 'lucide-react'
 import { useAuth } from '../features/auth/AuthContext'
 import {
   getWorkItem,
   updateWorkItem,
   updateWorkItemStatus,
+  deleteWorkItem,
   getWorkComments,
   addWorkComment,
   getWorkUpdates,
@@ -286,6 +288,21 @@ export default function WorkItemDetails() {
     }
   }
 
+  async function handleDeleteWork() {
+    if (!accessToken || !workItemId || !workItem) return
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${workItem.title}"? This will permanently delete the work item and all associated progress.`,
+    )
+    if (!confirmed) return
+
+    try {
+      await deleteWorkItem(accessToken, workItemId)
+      navigate('/admin-workboard')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete work item.')
+    }
+  }
+
   if (loading) {
     return <div className="p-12 text-center text-slate-400">Loading work item details...</div>
   }
@@ -547,6 +564,18 @@ export default function WorkItemDetails() {
                 className="py-1.5 px-3 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold text-xs cursor-pointer transition"
               >
                 ↩ Send Back for Correction
+              </button>
+            )}
+
+            {canManage && (
+              <button
+                type="button"
+                onClick={handleDeleteWork}
+                title="Delete Work Item"
+                className="py-1.5 px-3 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs cursor-pointer transition flex items-center gap-1.5"
+              >
+                <Trash2 size={13} />
+                <span>Delete</span>
               </button>
             )}
 

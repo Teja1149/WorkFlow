@@ -214,12 +214,20 @@ export async function createDailyTarget(
     }
   }
 
-  if (input.project_id) {
+  const projectId =
+    input.project_id &&
+    input.project_id !== 'null' &&
+    input.project_id !== 'undefined' &&
+    input.project_id.trim() !== ''
+      ? input.project_id.trim()
+      : null
+
+  if (projectId) {
     const { data: project } =
       await supabaseAdmin
         .from('projects')
         .select('id, organization_id')
-        .eq('id', input.project_id)
+        .eq('id', projectId)
         .eq('organization_id', organizationId)
         .maybeSingle()
 
@@ -229,6 +237,9 @@ export async function createDailyTarget(
   }
 
   if (input.module_id) {
+    if (!projectId) {
+      throw new Error('Module can only be assigned when a project is selected.')
+    }
     const { data: module } =
       await supabaseAdmin
         .from('project_modules')
@@ -240,10 +251,7 @@ export async function createDailyTarget(
       throw new Error('Module not found.')
     }
 
-    if (
-      input.project_id &&
-      module.project_id !== input.project_id
-    ) {
+    if (module.project_id !== projectId) {
       throw new Error(
         'Module does not belong to the selected project.',
       )
@@ -310,10 +318,10 @@ export async function createDailyTarget(
       .insert({
         organization_id: organizationId,
         employee_id: input.employee_id,
-        project_id: input.project_id || null,
-        module_id: input.module_id || null,
-        milestone_id: input.milestone_id || null,
-        sprint_id: input.sprint_id || null,
+        project_id: projectId,
+        module_id: projectId ? (input.module_id || null) : null,
+        milestone_id: projectId ? (input.milestone_id || null) : null,
+        sprint_id: projectId ? (input.sprint_id || null) : null,
         work_item_id: input.work_item_id || null,
 
         title: input.title.trim(),
@@ -2495,6 +2503,14 @@ export async function createDailyTargetWithWorkItem(
     input.deadline ||
     new Date().toISOString().slice(0, 10)
 
+  const projectId =
+    input.project_id &&
+    input.project_id !== 'null' &&
+    input.project_id !== 'undefined' &&
+    input.project_id.trim() !== ''
+      ? input.project_id.trim()
+      : null
+
   const workDescription =
     (input.work_description || input.description || '').trim() || null
 
@@ -2503,9 +2519,9 @@ export async function createDailyTargetWithWorkItem(
       .from('work_items')
       .insert({
         organization_id: organizationId,
-        project_id: input.project_id || null,
-        module_id: input.module_id || null,
-        milestone_id: input.milestone_id || null,
+        project_id: projectId,
+        module_id: projectId ? (input.module_id || null) : null,
+        milestone_id: projectId ? (input.milestone_id || null) : null,
         work_type_id: input.work_type_id || null,
         assigned_to: employeeId,
         created_by: createdBy,
@@ -2574,7 +2590,7 @@ export async function createDailyTargetWithWorkItem(
     await notifyWorkAssignment({
       organizationId,
       workItemId: workItem.id,
-      projectId: input.project_id || null,
+      projectId: projectId,
       title: 'New Work Assigned',
       message: `You have been assigned "${workTitle}".`,
       authorUserId: createdBy,
@@ -2595,19 +2611,11 @@ export async function createDailyTargetWithWorkItem(
         createdBy,
         {
           employee_id: employeeId,
-          project_id: input.project_id || null,
-          module_id: input.module_id || null,
-
-          milestone_id:
-            input.milestone_id ||
-            null,
-
-          sprint_id:
-            input.sprint_id ||
-            null,
-
-          work_item_id:
-            workItem.id,
+          project_id: projectId,
+          module_id: projectId ? (input.module_id || null) : null,
+          milestone_id: projectId ? (input.milestone_id || null) : null,
+          sprint_id: projectId ? (input.sprint_id || null) : null,
+          work_item_id: workItem.id,
 
           title:
             workTitle,

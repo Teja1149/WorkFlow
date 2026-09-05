@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS public.work_items (
         REFERENCES public.organizations(id)
         ON DELETE CASCADE,
 
-    project_id uuid NOT NULL
+    project_id uuid
         REFERENCES public.projects(id)
         ON DELETE CASCADE,
 

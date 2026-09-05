@@ -206,7 +206,7 @@ export async function createWorkItem(
   createdBy: string,
   role?: string,
   input: {
-    project_id: string
+    project_id?: string | null
     work_type_id?: string | null
     module_id?: string | null
     milestone_id?: string | null
@@ -232,6 +232,32 @@ export async function createWorkItem(
   if (input.title?.trim().toUpperCase() === 'PROJECT_DAILY_REPORT_TEMPLATE') {
     throw new Error('Daily Report Templates cannot be created as work items.')
   }
+
+  const projectId =
+    input.project_id &&
+    input.project_id !== 'null' &&
+    input.project_id !== 'undefined' &&
+    input.project_id.trim() !== ''
+      ? input.project_id.trim()
+      : null
+
+  if (projectId) {
+    const { data: project, error: projectError } = await supabaseAdmin
+      .from('projects')
+      .select('id, organization_id')
+      .eq('id', projectId)
+      .eq('organization_id', organizationId)
+      .maybeSingle()
+
+    if (projectError) {
+      throw new Error(projectError.message)
+    }
+
+    if (!project) {
+      throw new Error('Project not found.')
+    }
+  }
+
   if (input.work_type_id) {
     const { data: workType, error: workTypeError } =
       await supabaseAdmin
@@ -255,6 +281,9 @@ export async function createWorkItem(
   }
 
   if (input.module_id) {
+    if (!projectId) {
+      throw new Error('Module can only be assigned when a project is selected.')
+    }
     const { data: module, error: moduleError } =
       await supabaseAdmin
         .from('project_modules')
@@ -274,12 +303,15 @@ export async function createWorkItem(
       throw new Error('This module is archived.')
     }
 
-    if (module.project_id !== input.project_id) {
+    if (module.project_id !== projectId) {
       throw new Error('Module must belong to the selected project.')
     }
   }
 
   if (input.milestone_id) {
+    if (!projectId) {
+      throw new Error('Milestone can only be assigned when a project is selected.')
+    }
     const { data: milestone, error: milestoneError } =
       await supabaseAdmin
         .from('project_milestones')
@@ -295,7 +327,7 @@ export async function createWorkItem(
       throw new Error('Milestone not found.')
     }
 
-    if (milestone.project_id !== input.project_id) {
+    if (milestone.project_id !== projectId) {
       throw new Error('Milestone must belong to the selected project.')
     }
   }
@@ -328,7 +360,7 @@ export async function createWorkItem(
     .from('work_items')
     .insert({
       organization_id: organizationId,
-      project_id: input.project_id,
+      project_id: projectId,
 
       // Source tracking
       project_target_id: input.project_target_id || null,
@@ -548,6 +580,9 @@ export async function updateWorkItem(
   }
 
   if (input.module_id !== undefined && input.module_id) {
+    if (!existing.project_id) {
+      throw new Error('Module can only be assigned when work belongs to a project.')
+    }
     const { data: module, error: moduleError } = await supabaseAdmin
       .from('project_modules')
       .select('id, project_id, is_active')
@@ -572,6 +607,9 @@ export async function updateWorkItem(
   }
 
   if (input.milestone_id !== undefined && input.milestone_id) {
+    if (!existing.project_id) {
+      throw new Error('Milestone can only be assigned when work belongs to a project.')
+    }
     const { data: milestone, error: milestoneError } = await supabaseAdmin
       .from('project_milestones')
       .select('id, project_id')
@@ -765,6 +803,20 @@ export async function deleteWorkItem(
   organizationId: string,
   workItemId: string,
 ) {
+  // Delete associated daily work targets
+  await supabaseAdmin
+    .from('daily_work_targets')
+    .delete()
+    .eq('work_item_id', workItemId)
+    .eq('organization_id', organizationId)
+
+  // Delete assignment history
+  await supabaseAdmin
+    .from('work_assignment_history')
+    .delete()
+    .eq('work_item_id', workItemId)
+    .eq('organization_id', organizationId)
+
   const { error } = await supabaseAdmin
     .from('work_items')
     .delete()
