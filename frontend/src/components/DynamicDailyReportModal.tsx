@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { CheckCircle2, Target, X, AlertCircle } from 'lucide-react'
 import { useAuth } from '../features/auth/AuthContext'
 import type { DailyTarget } from '../features/daily-targets/daily-target.types'
@@ -25,6 +25,7 @@ export default function DynamicDailyReportModal({
   const [formValues, setFormValues] = useState<Record<string, any>>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const initializedTargetIdRef = useRef<string | null>(null)
 
   const reportFields: ReportFieldDefinition[] =
     workType?.report_fields && workType.report_fields.length > 0
@@ -61,22 +62,35 @@ export default function DynamicDailyReportModal({
 
   useEffect(() => {
     if (target) {
-      const initial: Record<string, any> = {}
-      for (const field of reportFields) {
-        if (field.counts_toward_target) {
-          initial[field.key] = target.actual_value || 0
-        } else if (field.type === 'number') {
-          initial[field.key] = 0
-        } else if (field.type === 'boolean') {
-          initial[field.key] = false
-        } else {
-          initial[field.key] = ''
-        }
+      const isDifferentTarget = initializedTargetIdRef.current !== target.id
+      if (isDifferentTarget) {
+        initializedTargetIdRef.current = target.id
       }
-      setFormValues(initial)
-      setError('')
+
+      setFormValues((prev) => {
+        const next = isDifferentTarget ? {} : { ...prev }
+        for (const field of reportFields) {
+          if (next[field.key] !== undefined && next[field.key] !== null) {
+            continue
+          }
+          if (field.counts_toward_target) {
+            next[field.key] = target.actual_value || 0
+          } else if (field.type === 'number') {
+            next[field.key] = 0
+          } else if (field.type === 'boolean') {
+            next[field.key] = false
+          } else {
+            next[field.key] = ''
+          }
+        }
+        return next
+      })
+
+      if (isDifferentTarget) {
+        setError('')
+      }
     }
-  }, [target, workType])
+  }, [target?.id, reportFields])
 
   if (!isOpen || !target) return null
 

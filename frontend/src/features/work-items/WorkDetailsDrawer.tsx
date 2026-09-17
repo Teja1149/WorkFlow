@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -304,24 +304,40 @@ export default function WorkDetailsDrawer({
     ]
   }, [work, workTypes, workTypeId])
 
-  // Initialize default report values
-  useEffect(() => {
-    const initial: Record<string, any> = {}
-    const initialActual = linkedTarget?.actual_value ?? (work.status === 'DONE' ? targetValue : 0)
+  // Ref to track which work item is currently initialized so we never wipe active user input
+  const initializedWorkIdRef = useRef<string | null>(null)
 
-    for (const f of activeFields) {
-      if (f.counts_toward_target) {
-        initial[f.key] = initialActual || 0
-      } else if (f.type === 'NUMBER' || f.type === 'DECIMAL' || f.type === 'HOURS') {
-        initial[f.key] = 0
-      } else if (f.type === 'BOOLEAN') {
-        initial[f.key] = false
-      } else {
-        initial[f.key] = ''
-      }
+  // Initialize default report values safely without wiping user input on parent re-renders
+  useEffect(() => {
+    const isDifferentWorkItem = initializedWorkIdRef.current !== work.id
+    if (isDifferentWorkItem) {
+      initializedWorkIdRef.current = work.id
     }
-    setReportValues(initial)
-  }, [activeFields, linkedTarget, work.status, targetValue])
+
+    setReportValues((prev) => {
+      // If switching to a new work item, start fresh; otherwise preserve current user input
+      const next = isDifferentWorkItem ? {} : { ...prev }
+      const initialActual = linkedTarget?.actual_value ?? (work.status === 'DONE' ? targetValue : 0)
+
+      for (const f of activeFields) {
+        // If field already has a value in state, NEVER overwrite what user entered!
+        if (next[f.key] !== undefined && next[f.key] !== null) {
+          continue
+        }
+
+        if (f.counts_toward_target) {
+          next[f.key] = initialActual || 0
+        } else if (f.type === 'NUMBER' || f.type === 'DECIMAL' || f.type === 'HOURS') {
+          next[f.key] = 0
+        } else if (f.type === 'BOOLEAN') {
+          next[f.key] = false
+        } else {
+          next[f.key] = ''
+        }
+      }
+      return next
+    })
+  }, [work.id, activeFields])
 
   // Automatic calculation of actual output from target-counting fields
   const actualValue = useMemo(() => {
