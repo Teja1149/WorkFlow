@@ -218,6 +218,9 @@ export default function WorkDetailsDrawer({
     'AUTOMATIC',
   )
   const [deadline, setDeadline] = useState(work.deadline || '')
+  const [deadlineTime, setDeadlineTime] = useState(
+    work.deadline_time || (linkedTarget as any)?.deadline_time || '',
+  )
   const [isPaused, setIsPaused] = useState(false)
 
   // Dynamic Report Field Values
@@ -375,7 +378,7 @@ export default function WorkDetailsDrawer({
   ) {
     if (!accessToken) return
 
-    const blockerDetails = String(
+    let blockerDetails = String(
       reportValues.blocker ||
       reportValues.notes ||
       reportValues.comment ||
@@ -386,9 +389,24 @@ export default function WorkDetailsDrawer({
       nextStatus === 'BLOCKED' &&
       !blockerDetails
     ) {
-      setError(
-        'Please enter the blocker details before marking this work as blocked.',
+      const inputReason = window.prompt(
+        'Please enter the blocker reason before marking as blocked:',
       )
+      if (inputReason === null) {
+        return
+      }
+      if (!inputReason.trim()) {
+        setError(
+          'Please enter the blocker details before marking this work as blocked.',
+        )
+        return
+      }
+      blockerDetails = inputReason.trim()
+      setReportValues((prev) => ({ ...prev, blocker: blockerDetails }))
+    }
+
+    if (nextStatus === 'DONE') {
+      await handleCompleteWork()
       return
     }
 
@@ -436,7 +454,9 @@ export default function WorkDetailsDrawer({
       await updateWorkItem(accessToken, work.id, {
         assigned_to: assignedTo || null,
         work_type_id: workTypeId || null,
+        target_quantity: Number(targetValue) || undefined,
         deadline: deadline || null,
+        deadline_time: deadlineTime || null,
         assignment_reason:
           assignedTo !== work.assigned_to ? 'Reassigned via Work Planner' : undefined,
       } as any)
@@ -446,6 +466,7 @@ export default function WorkDetailsDrawer({
           employee_id: assignedTo || undefined,
           target_value: Number(targetValue) || 1,
           deadline_date: deadline || undefined,
+          deadline_time: deadlineTime || undefined,
         })
       }
 
@@ -761,9 +782,37 @@ export default function WorkDetailsDrawer({
               <div className="flex items-center justify-between pt-1 text-[11px] font-bold">
                 <div className="flex items-center gap-2">
                   <span className="text-slate-400 uppercase font-mono text-[10px]">Status:</span>
-                  <span className={`px-2 py-0.5 rounded-full border text-[10px] ${statusConfig.badge}`}>
-                    {statusConfig.label}
-                  </span>
+                  <select
+                    value={work.status}
+                    onChange={(e) => {
+                      const next = e.target.value as 'TODO' | 'IN_PROGRESS' | 'DONE' | 'BLOCKED'
+                      handleStatusTransition(next)
+                    }}
+                    disabled={submitting}
+                    aria-label="Update Task Status"
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border outline-none cursor-pointer transition shadow-2xs ${
+                      work.status === 'TODO'
+                        ? 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
+                        : work.status === 'IN_PROGRESS'
+                        ? 'bg-blue-50 text-blue-700 border-blue-300 hover:bg-blue-100'
+                        : work.status === 'DONE'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
+                        : 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
+                    }`}
+                  >
+                    <option value="TODO" className="bg-white text-slate-700 font-semibold">
+                      To Do
+                    </option>
+                    <option value="IN_PROGRESS" className="bg-white text-blue-700 font-semibold">
+                      In Progress
+                    </option>
+                    <option value="DONE" className="bg-white text-emerald-700 font-semibold">
+                      Completed
+                    </option>
+                    <option value="BLOCKED" className="bg-white text-amber-800 font-semibold">
+                      Blocked
+                    </option>
+                  </select>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -840,7 +889,7 @@ export default function WorkDetailsDrawer({
             )}
 
             {/* IF ADMIN/MANAGER MANAGE VIEW */}
-            {isManagerOrAdmin && !isOwnWork && (
+            {isManagerOrAdmin && (
               <div className="space-y-4">
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
                   <p className="text-[10px] font-black uppercase tracking-wider text-[#801424]">
@@ -866,7 +915,7 @@ export default function WorkDetailsDrawer({
                       </select>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-3 gap-2">
                       <div>
                         <label className="block text-[11px] font-bold text-slate-700 mb-1">
                           Overall Target ({unit})
@@ -882,12 +931,24 @@ export default function WorkDetailsDrawer({
 
                       <div>
                         <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                          Deadline
+                          Deadline Date
                         </label>
                         <input
                           type="date"
                           value={deadline}
                           onChange={(e) => setDeadline(e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-[#801424]"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Deadline Time
+                        </label>
+                        <input
+                          type="time"
+                          value={deadlineTime}
+                          onChange={(e) => setDeadlineTime(e.target.value)}
                           className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-[#801424]"
                         />
                       </div>
@@ -931,6 +992,17 @@ export default function WorkDetailsDrawer({
                       >
                         <RotateCcw size={13} />
                         <span>Send Back</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleDeleteWork}
+                        disabled={submitting}
+                        title="Delete Work Item"
+                        className="px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs cursor-pointer flex items-center gap-1"
+                      >
+                        <Trash2 size={13} />
+                        <span>Delete</span>
                       </button>
                     </div>
                   </div>

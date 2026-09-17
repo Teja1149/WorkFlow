@@ -1,6 +1,7 @@
 import { DateTime } from 'luxon'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { createWorkItem } from '../work-items/work-item.service.js'
+import { notifyWorkAssignment } from '../notifications/notification.service.js'
 import type {
   CreateProjectTargetInput,
   EmployeeAllocation,
@@ -486,8 +487,32 @@ async function syncProjectTargetWorkItems(
               null,
             deadline_time:
               target.deadline_time || null,
+            skipNotification: true,
           },
         )
+      }
+
+      // Send ONE consolidated notification with complete details for this employee allocation
+      if (employeeId && employeeId !== userId) {
+        try {
+          const unitStr = target.unit || 'units'
+          const deadlineStr = target.deadline_date || target.period_end || ''
+          const deadlineTimeStr = target.deadline_time ? ` at ${target.deadline_time}` : ''
+          const deadlineSummary = deadlineStr ? ` (Due: ${deadlineStr}${deadlineTimeStr})` : ''
+
+          await notifyWorkAssignment({
+            organizationId,
+            workItemId: target.id,
+            projectId: target.project_id,
+            title: 'New Target Assigned',
+            message: `You have been allocated a target of ${quantity} ${unitStr} for "${target.name}"${deadlineSummary}.`,
+            authorUserId: userId,
+            assignedTo: employeeId,
+            createdBy: userId,
+          })
+        } catch (notifErr) {
+          console.error(`Failed to notify target allocation to ${employeeId}:`, notifErr)
+        }
       }
 
       continue
@@ -569,8 +594,32 @@ async function syncProjectTargetWorkItems(
             deadline: unitDeadline,
             deadline_time:
               target.deadline_time || null,
+            skipNotification: true,
           },
         )
+      }
+    }
+
+    // Send ONE consolidated notification with complete details for this employee allocation
+    if (employeeId && employeeId !== userId) {
+      try {
+        const unitStr = target.unit || 'units'
+        const deadlineStr = target.deadline_date || target.period_end || ''
+        const deadlineTimeStr = target.deadline_time ? ` at ${target.deadline_time}` : ''
+        const deadlineSummary = deadlineStr ? ` (Due: ${deadlineStr}${deadlineTimeStr})` : ''
+
+        await notifyWorkAssignment({
+          organizationId,
+          workItemId: target.id,
+          projectId: target.project_id,
+          title: 'New Target Assigned',
+          message: `You have been allocated a target of ${quantity} ${unitStr} for "${target.name}"${deadlineSummary}.`,
+          authorUserId: userId,
+          assignedTo: employeeId,
+          createdBy: userId,
+        })
+      } catch (notifErr) {
+        console.error(`Failed to notify target allocation to ${employeeId}:`, notifErr)
       }
     }
   }

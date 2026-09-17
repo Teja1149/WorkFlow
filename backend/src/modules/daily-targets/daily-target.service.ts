@@ -2587,12 +2587,18 @@ export async function createDailyTargetWithWorkItem(
   }
 
   try {
+    const targetQty = input.target_value ?? input.target_quantity
+    const unitStr = (input.unit && input.unit.trim()) || input.quantity_unit?.trim() || 'items'
+    const targetSummary = targetQty ? ` with target: ${targetQty} ${unitStr}` : ''
+    const deadlineTimeStr = input.deadline_time || input.target_deadline_time
+    const deadlineSummary = deadlineDate ? ` (Due: ${deadlineDate}${deadlineTimeStr ? ` at ${deadlineTimeStr}` : ''})` : ''
+
     await notifyWorkAssignment({
       organizationId,
       workItemId: workItem.id,
       projectId: projectId,
       title: 'New Work Assigned',
-      message: `You have been assigned "${workTitle}".`,
+      message: `You have been assigned "${workTitle}"${targetSummary}${deadlineSummary}.`,
       authorUserId: createdBy,
       assignedTo: employeeId,
       createdBy,

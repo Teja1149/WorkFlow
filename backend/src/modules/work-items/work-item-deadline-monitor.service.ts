@@ -153,31 +153,43 @@ async function getAdminIds(organizationId: string): Promise<string[]> {
 export async function runDeadlineMonitor() {
   const now = new Date()
 
-  const { data, error } = await supabaseAdmin
-    .from('work_items')
-    .select(`
-      id,
-      organization_id,
-      project_id,
-      assigned_to,
-      title,
-      status,
-      priority,
-      health,
-      deadline,
-      deadline_time,
-      target_quantity,
-      completed_quantity,
-      quantity_unit,
-      pacing_start_date,
-      pacing_enabled,
-      escalation_level
-    `)
-    .not('deadline', 'is', null)
-    .neq('status', 'DONE')
+  const [{ data, error }, { data: orgSettings }] = await Promise.all([
+    supabaseAdmin
+      .from('work_items')
+      .select(`
+        id,
+        organization_id,
+        project_id,
+        assigned_to,
+        title,
+        status,
+        priority,
+        health,
+        deadline,
+        deadline_time,
+        target_quantity,
+        completed_quantity,
+        quantity_unit,
+        pacing_start_date,
+        pacing_enabled,
+        escalation_level
+      `)
+      .not('deadline', 'is', null)
+      .neq('status', 'DONE'),
+    supabaseAdmin
+      .from('organization_settings')
+      .select('organization_id, timezone'),
+  ])
 
   if (error) {
     throw new Error(error.message)
+  }
+
+  const orgTimezoneMap = new Map<string, string>()
+  for (const s of orgSettings || []) {
+    if (s.organization_id && s.timezone) {
+      orgTimezoneMap.set(s.organization_id, s.timezone)
+    }
   }
 
   const items = (data || []) as DeadlineWorkItem[]
@@ -188,7 +200,8 @@ export async function runDeadlineMonitor() {
 
   for (const item of items) {
     try {
-      const deadline = createDeadlineDateTime(item.deadline, item.deadline_time)
+      const orgTz = (item.organization_id && orgTimezoneMap.get(item.organization_id)) || 'Asia/Kolkata'
+      const deadline = createDeadlineDateTime(item.deadline, item.deadline_time, orgTz)
       if (!deadline) {
         continue
       }
@@ -197,8 +210,8 @@ export async function runDeadlineMonitor() {
 
       const deadlineState: DeadlineState = getDeadlineState(deadline, now)
       const msRemaining = deadline.getTime() - now.getTime()
-      const hoursRemaining = msRemaining / (1000 * 60 * 60)
-      const hoursOverdue = Math.max(0, -hoursRemaining)
+      const minutesRemaining = msRemaining / (1000 * 60)
+      const hoursOverdue = Math.max(0, -msRemaining / (1000 * 60 * 60))
 
       // Calculate pacing independently
       const pacing = calculateWorkItemPacing({
@@ -235,7 +248,7 @@ export async function runDeadlineMonitor() {
           const sent = await sendAlertOnce(
             item,
             item.assigned_to,
-            `pacing-backlog-emp-${todayStr}`,
+            `pacing-backlog-emp-${todayStr}-${item.id}`,
             'DEADLINE_WARNING',
             'Workload Increased (Behind Schedule)',
             `Expected by today: ${pacing.expectedQuantity} ${unitLabel}, Completed: ${pacing.completedQuantity} ${unitLabel}. You have a backlog of ${pacing.backlog} ${unitLabel}. Required pace increased to ${Math.ceil(pacing.requiredPerDay)} ${unitLabel}/day to meet deadline.`,
@@ -250,7 +263,7 @@ export async function runDeadlineMonitor() {
             const sent = await sendAlertOnce(
               item,
               pmId,
-              `pacing-backlog-pm-${todayStr}`,
+              `pacing-backlog-pm-${todayStr}-${item.id}`,
               'WORK_ESCALATED',
               'Employee Behind Daily Target Pace',
               `"${item.title}" is behind schedule with a backlog of ${pacing.backlog} ${unitLabel}. Required pace increased to ${Math.ceil(pacing.requiredPerDay)} ${unitLabel}/day.`,
@@ -261,7 +274,7 @@ export async function runDeadlineMonitor() {
       }
 
       // 1. OVERDUE STATE (Deadline has passed & status != DONE)
-      if (deadlineState === 'OVERDUE') {
+      if (msRemaining <= 0 || deadlineState === 'OVERDUE') {
         overdueCount += 1
 
         let escalationLevel = 1
@@ -326,7 +339,7 @@ export async function runDeadlineMonitor() {
             const sent = await sendAlertOnce(
               item,
               pmId,
-              'overdue-manager-2h',
+              `overdue-manager-2h-${item.id}`,
               'WORK_ESCALATED',
               'Overdue work escalation',
               `"${item.title}" is overdue by ${Math.floor(hoursOverdue)} hours and requires managerial attention.`,
@@ -343,7 +356,7 @@ export async function runDeadlineMonitor() {
               const sent = await sendAlertOnce(
                 item,
                 adminId,
-                'overdue-admin-4h',
+                `overdue-admin-4h-${item.id}`,
                 'WORK_ESCALATED',
                 'Critical overdue escalation',
                 `"${item.title}" is overdue by ${Math.floor(hoursOverdue)} hours. Admin escalation triggered.`,
@@ -356,18 +369,16 @@ export async function runDeadlineMonitor() {
         continue
       }
 
-      const minutesRemaining = msRemaining / (1000 * 60)
-
-      // 2. 10 MINUTES BEFORE DEADLINE (<= 10 mins, > 0 mins) -> DEADLINE_URGENT (Assigned user only)
-      if (minutesRemaining <= 10 && minutesRemaining > 0) {
+      // 2. 5 MINUTES BEFORE DEADLINE (<= 5 mins, > 0 mins) -> DEADLINE_URGENT (Assigned user only)
+      if (minutesRemaining <= 5 && minutesRemaining > 0) {
         if (item.assigned_to) {
           const sent = await sendAlertOnce(
             item,
             item.assigned_to,
-            `deadline-10m-${item.id}`,
+            `deadline-5m-${item.id}`,
             'DEADLINE_URGENT',
-            '🔴 10 Minutes Remaining',
-            `"${item.title}" is due in less than 10 minutes! Please finish and submit your work.`,
+            '🔴 5 Minutes Remaining',
+            `"${item.title}" is due in 5 minutes! Please submit your work immediately.`,
           )
           if (sent) notificationsSent++
         }
@@ -388,8 +399,38 @@ export async function runDeadlineMonitor() {
         continue
       }
 
-      // 3. 1 HOUR BEFORE DEADLINE (<= 60 mins, > 10 mins) -> DEADLINE_APPROACHING (Assigned user only)
-      if (minutesRemaining <= 60 && minutesRemaining > 10) {
+      // 3. 30 MINUTES BEFORE DEADLINE (<= 30 mins, > 5 mins) -> DEADLINE_WARNING (Assigned user only)
+      if (minutesRemaining <= 30 && minutesRemaining > 5) {
+        if (item.assigned_to) {
+          const sent = await sendAlertOnce(
+            item,
+            item.assigned_to,
+            `deadline-30m-${item.id}`,
+            'DEADLINE_WARNING',
+            '⚠️ 30 Minutes Remaining',
+            `"${item.title}" is due in 30 minutes. Please finalize and review your deliverables.`,
+          )
+          if (sent) notificationsSent++
+        }
+
+        try {
+          await supabaseAdmin
+            .from('work_items')
+            .update({
+              health: 'RED',
+              escalation_level: 1,
+              updated_at: now.toISOString(),
+            })
+            .eq('id', item.id)
+        } catch (updErr) {
+          console.warn('Health update note:', updErr)
+        }
+
+        continue
+      }
+
+      // 4. 1 HOUR BEFORE DEADLINE (<= 60 mins, > 30 mins) -> DEADLINE_APPROACHING (Assigned user only)
+      if (minutesRemaining <= 60 && minutesRemaining > 30) {
         if (item.assigned_to) {
           const sent = await sendAlertOnce(
             item,
@@ -397,68 +438,7 @@ export async function runDeadlineMonitor() {
             `deadline-1h-${item.id}`,
             'DEADLINE_APPROACHING',
             '⏳ 1 Hour Remaining',
-            `"${item.title}" is due in less than 1 hour. Please prepare deliverables.`,
-          )
-          if (sent) notificationsSent++
-        }
-
-        try {
-          await supabaseAdmin
-            .from('work_items')
-            .update({
-              health: 'RED',
-              escalation_level: 1,
-              updated_at: now.toISOString(),
-            })
-            .eq('id', item.id)
-        } catch (updErr) {
-          console.warn('Health update note:', updErr)
-        }
-
-        continue
-      }
-      if (deadlineState === 'FINAL_WARNING') {
-        if (item.assigned_to) {
-          const sent = await sendAlertOnce(
-            item,
-            item.assigned_to,
-            'deadline-final-warning',
-            'DEADLINE_URGENT',
-            '🔴 1 Hour Remaining',
-            `"${item.title}" is due in less than 1 hour. This work is now urgent.`,
-          )
-          if (sent) notificationsSent++
-        }
-
-        try {
-          await supabaseAdmin
-            .from('work_items')
-            .update({
-              health: 'RED',
-              escalation_level: 2,
-              updated_at: now.toISOString(),
-            })
-            .eq('id', item.id)
-        } catch (updErr) {
-          console.warn('Health update note:', updErr)
-        }
-
-        continue
-      }
-
-      // 3. URGENT (1 to 6 hours remaining) -> reminder every 1 hour
-      if (deadlineState === 'URGENT') {
-        if (item.assigned_to) {
-          const hourBucket = Math.max(1, Math.ceil(hoursRemaining))
-          const alertKey = `urgent-1h-${hourBucket}h`
-
-          const sent = await sendAlertOnce(
-            item,
-            item.assigned_to,
-            alertKey,
-            'DEADLINE_URGENT',
-            '⚠ Urgent Deadline',
-            `"${item.title}" has approximately ${hourBucket} hours remaining. Please complete pending deliverables.`,
+            `"${item.title}" is due in 1 hour. Please prepare deliverables.`,
           )
           if (sent) notificationsSent++
         }
@@ -479,68 +459,7 @@ export async function runDeadlineMonitor() {
         continue
       }
 
-      // 4. CRITICAL (6 to 24 hours remaining) -> reminder every 2 hours
-      if (deadlineState === 'CRITICAL') {
-        if (item.assigned_to) {
-          const twoHourWindow = Math.ceil(hoursRemaining / 2) * 2
-          const alertKey = `critical-2h-${twoHourWindow}h`
-
-          const sent = await sendAlertOnce(
-            item,
-            item.assigned_to,
-            alertKey,
-            'DEADLINE_CRITICAL',
-            'Deadline Approaching',
-            `"${item.title}" has approximately ${Math.ceil(hoursRemaining)} hours remaining.`,
-          )
-          if (sent) notificationsSent++
-        }
-
-        try {
-          await supabaseAdmin
-            .from('work_items')
-            .update({
-              health,
-              updated_at: now.toISOString(),
-            })
-            .eq('id', item.id)
-        } catch (updErr) {
-          console.warn('Health update note:', updErr)
-        }
-
-        continue
-      }
-
-      // 5. WARNING (24 to 48 hours remaining) -> 1 reminder
-      if (deadlineState === 'WARNING') {
-        if (item.assigned_to) {
-          const sent = await sendAlertOnce(
-            item,
-            item.assigned_to,
-            'deadline-warning-24h',
-            'DEADLINE_WARNING',
-            'Deadline in 24–48 Hours',
-            `"${item.title}" is due in ${Math.ceil(hoursRemaining / 24)} days. Please review your progress.`,
-          )
-          if (sent) notificationsSent++
-        }
-
-        try {
-          await supabaseAdmin
-            .from('work_items')
-            .update({
-              health,
-              updated_at: now.toISOString(),
-            })
-            .eq('id', item.id)
-        } catch (updErr) {
-          console.warn('Health update note:', updErr)
-        }
-
-        continue
-      }
-
-      // 6. NORMAL (> 48 hours remaining) -> Update health if changed
+      // 5. NORMAL (> 60 minutes remaining) -> Update health if changed, no notification sent
       if (item.health !== health) {
         try {
           await supabaseAdmin

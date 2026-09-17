@@ -15,6 +15,7 @@ import {
   Send,
   Sparkles,
   Target,
+  Trash2,
   User,
   X,
 } from 'lucide-react'
@@ -24,6 +25,7 @@ import {
   addWorkUpdate,
   updateWorkItem,
   updateWorkItemStatus,
+  deleteWorkItem,
   type WorkItem,
 } from './work-item.service'
 import { getWorkStatusConfig } from './work-status'
@@ -172,6 +174,26 @@ export default function WorkItemDrawer({
 
   async function handleComplete() {
     await handleStatusTransition('DONE')
+  }
+
+  // Manager/Admin Action: Delete Assigned Work
+  async function handleDeleteWork() {
+    if (!accessToken || !workItem) return
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${workItem.title}"? This will remove all associated target and progress tracking.`,
+    )
+    if (!confirmed) return
+
+    setSubmitting(true)
+    setError('')
+    try {
+      await deleteWorkItem(accessToken, workItem.id)
+      await onUpdated()
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to delete work item.')
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -396,6 +418,19 @@ export default function WorkItemDrawer({
                   </button>
                 </div>
               </div>
+            )}
+
+            {/* Manager / Admin Delete Work Action */}
+            {isManagerOrAdmin && (
+              <button
+                type="button"
+                onClick={handleDeleteWork}
+                disabled={submitting}
+                className="w-full py-2.5 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 font-bold text-xs cursor-pointer transition flex items-center justify-center gap-1.5"
+              >
+                <Trash2 size={13} />
+                <span>Delete Assigned Work</span>
+              </button>
             )}
 
             {/* Work Updates Thread */}

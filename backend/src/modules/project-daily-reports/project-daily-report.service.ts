@@ -147,7 +147,8 @@ export async function saveProjectReportTemplate(
         title: TEMPLATE_TITLE_KEY,
         description: JSON.stringify(templatePayload),
         assignment_mode: 'ALL',
-        frequency: null,
+        frequency: 'DAILY',
+        deadline_time: '18:00',
         is_active: true,
         created_by: userId,
       })

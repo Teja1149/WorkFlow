@@ -227,6 +227,7 @@ export async function createWorkItem(
     estimated_hours?: number | null
     actual_hours?: number | null
     story_points?: number | null
+    skipNotification?: boolean
   } = {} as any,
 ) {
   if (input.title?.trim().toUpperCase() === 'PROJECT_DAILY_REPORT_TEMPLATE') {
@@ -430,19 +431,28 @@ export async function createWorkItem(
   await logActivity(data.id, createdBy, 'WORK_ASSIGNED', `Created work item: ${input.title}`)
 
   // Automatic Notifications to Assigned Employee & Manager
-  try {
-    await notifyWorkAssignment({
-      organizationId,
-      workItemId: data.id,
-      projectId: data.project_id,
-      title: 'New Work Item Created',
-      message: `Work item "${data.title}" was created.`,
-      authorUserId: createdBy,
-      assignedTo: data.assigned_to,
-      createdBy,
-    })
-  } catch (notifErr) {
-    console.error('Failed to notify work creation:', notifErr)
+  if (!input.skipNotification) {
+    try {
+      const targetQty = data.target_quantity ?? (input as any).target_value
+      const unitStr = (data.quantity_unit ?? (input as any).unit)?.trim() || 'tasks'
+      const targetSummary = targetQty ? ` with target: ${targetQty} ${unitStr}` : ''
+      const deadlineSummary = data.deadline
+        ? ` (Due: ${data.deadline}${data.deadline_time ? ` at ${data.deadline_time}` : ''})`
+        : ''
+
+      await notifyWorkAssignment({
+        organizationId,
+        workItemId: data.id,
+        projectId: data.project_id,
+        title: 'New Work Assigned',
+        message: `You have been assigned "${data.title}"${targetSummary}${deadlineSummary}.`,
+        authorUserId: createdBy,
+        assignedTo: data.assigned_to,
+        createdBy,
+      })
+    } catch (notifErr) {
+      console.error('Failed to notify work creation:', notifErr)
+    }
   }
 
   return data
@@ -802,7 +812,36 @@ export async function updateWorkItem(
 export async function deleteWorkItem(
   organizationId: string,
   workItemId: string,
+  deletedBy?: string,
 ) {
+  // Fetch existing work item info for audit log
+  const { data: item } = await supabaseAdmin
+    .from('work_items')
+    .select('id, title, assigned_to, project_id')
+    .eq('id', workItemId)
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+
+  if (deletedBy && item) {
+    try {
+      await logActivity(
+        workItemId,
+        deletedBy,
+        'WORK_DELETED',
+        `Deleted assigned work item "${item.title}".`,
+      )
+    } catch (actErr) {
+      console.warn('[WorkItem] Failed to log delete activity:', actErr)
+    }
+  }
+
+  // Delete associated deadline alerts
+  await supabaseAdmin
+    .from('work_item_deadline_alerts')
+    .delete()
+    .eq('work_item_id', workItemId)
+    .eq('organization_id', organizationId)
+
   // Delete associated daily work targets
   await supabaseAdmin
     .from('daily_work_targets')

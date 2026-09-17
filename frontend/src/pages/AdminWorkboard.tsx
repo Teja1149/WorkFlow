@@ -423,7 +423,8 @@ export default function AdminWorkboard() {
 
         const highestSeverity = getRowHighestSeverity(employeeTargets, current)
 
-        const todayStr = new Date().toISOString().split('T')[0]
+        const now = new Date()
+        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
         const todayDailyUpdate =
           companyDailyUpdates.find(
             (u) =>
@@ -568,7 +569,7 @@ export default function AdminWorkboard() {
 
         {/* HORIZONTAL EMPLOYEE WORKBOARD WITH FIXED ACTION COLUMN */}
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs">
-          <div className="grid grid-cols-[260px_minmax(0,1fr)_120px] border-b border-slate-800 bg-slate-950">
+          <div className="grid grid-cols-[280px_minmax(0,1fr)_120px] border-b border-slate-800 bg-slate-950">
             <div className="px-5 py-3 text-[11px] font-extrabold uppercase tracking-wider text-white bg-slate-950 border-r border-slate-800">
               EMPLOYEE & DAILY REPORT
             </div>
@@ -676,18 +677,7 @@ function parseDailyReportUpdate(todayDailyUpdate: any) {
   if (!todayDailyUpdate) return null
 
   let paragraphText = todayDailyUpdate.paragraph_update || ''
-  const metrics: Array<{ label: string; value: string }> = []
-
-  // Check if values array exists (from legacy project_daily_update_values)
-  if (Array.isArray(todayDailyUpdate.values) && todayDailyUpdate.values.length > 0) {
-    todayDailyUpdate.values.forEach((v: any) => {
-      const label = v.project_update_fields?.field_name || v.field_name || 'Metric'
-      const val = v.value_text
-      if (val !== undefined && val !== null && val !== '') {
-        metrics.push({ label, value: String(val) })
-      }
-    })
-  }
+  const fields: Array<{ label: string; value: string; isBlocker?: boolean; isBlocked?: boolean }> = []
 
   // If paragraph_update is JSON (from structured project-daily-reports submission)
   if (typeof paragraphText === 'string' && paragraphText.trim().startsWith('{')) {
@@ -696,19 +686,54 @@ function parseDailyReportUpdate(todayDailyUpdate: any) {
       if (Array.isArray(parsed.answers)) {
         parsed.answers.forEach((a: any) => {
           if (a.value !== undefined && a.value !== null && a.value !== '') {
-            const valStr = typeof a.value === 'boolean' ? (a.value ? 'Yes' : 'No') : String(a.value)
-            metrics.push({ label: a.label || a.field_key || 'Metric', value: valStr })
+            const isBlocker =
+              (a.field_key && a.field_key.toLowerCase().includes('block')) ||
+              (a.label && a.label.toLowerCase().includes('block'))
+            let valStr = String(a.value)
+            let isBlocked = false
+
+            if (typeof a.value === 'boolean') {
+              if (isBlocker) {
+                valStr = a.value ? 'Yes (Blocked)' : 'None'
+                isBlocked = a.value
+              } else {
+                valStr = a.value ? 'Yes' : 'No'
+              }
+            } else if (isBlocker) {
+              if (['no', 'none', 'false', '0', 'nil', 'n/a'].includes(valStr.trim().toLowerCase())) {
+                valStr = 'None'
+                isBlocked = false
+              } else {
+                isBlocked = true
+              }
+            }
+
+            fields.push({
+              label: a.label || a.field_key || 'Field',
+              value: valStr,
+              isBlocker,
+              isBlocked,
+            })
           }
         })
       }
       paragraphText = parsed.summary || parsed.notes || ''
     } catch {}
+  } else if (Array.isArray(todayDailyUpdate.values) && todayDailyUpdate.values.length > 0) {
+    // Check if values array exists (from legacy project_daily_update_values)
+    todayDailyUpdate.values.forEach((v: any) => {
+      const label = v.project_update_fields?.field_name || v.field_name || 'Metric'
+      const val = v.value_text
+      if (val !== undefined && val !== null && val !== '') {
+        fields.push({ label, value: String(val) })
+      }
+    })
   }
 
   return {
     projectName: todayDailyUpdate.projects?.name || 'Daily Report',
     progressPercent: todayDailyUpdate.progress_percent || 0,
-    metrics,
+    fields,
     paragraphText,
   }
 }
@@ -730,7 +755,7 @@ function EmployeeWorkRow({
 
   return (
     <div className="bg-white hover:bg-slate-50/40 transition">
-      <div className="grid grid-cols-[260px_minmax(0,1fr)_120px] min-h-47.5 items-stretch">
+      <div className="grid grid-cols-[280px_minmax(0,1fr)_120px] min-h-47.5 items-stretch">
 
         {/* EMPLOYEE & DAILY REPORT CARD - SLEEK BLACK BACKGROUND */}
         <div className="border-r border-slate-800 bg-[#0f172a] hover:bg-[#090d16] px-4 py-4 flex flex-col justify-between transition-colors">
@@ -784,44 +809,67 @@ function EmployeeWorkRow({
             </div>
           </button>
 
-          {/* TODAY'S DAILY REPORT TEMPLATE METRICS & OUTPUT */}
-          <div className="mt-2.5 pt-2 border-t border-slate-800/80 text-[10px]">
-            {parsedReport ? (
-              <div className="bg-emerald-950/60 border border-emerald-500/40 rounded-xl p-2.5 space-y-1.5 shadow-md">
-                <div className="flex items-center justify-between font-bold text-emerald-300 text-[9.5px]">
-                  <span className="flex items-center gap-1.5 truncate max-w-35">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block shrink-0 animate-pulse"></span>
-                    <span className="truncate text-emerald-200">{parsedReport.projectName}</span>
-                  </span>
-                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.2 rounded text-[8.5px] font-extrabold shrink-0">
-                    {parsedReport.progressPercent}%
-                  </span>
-                </div>
+          {/* TODAY'S DAILY REPORT UNDER EMPLOYEE NAME */}
+          <div className="mt-3 pt-2.5 border-t border-slate-800 text-[10px]">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="font-extrabold text-[9.5px] uppercase tracking-wider text-slate-400">
+                Today's Daily Report
+              </span>
+              {parsedReport ? (
+                <span className="text-[8.5px] font-bold text-emerald-400 bg-emerald-950/80 px-1.5 py-0.2 rounded border border-emerald-800/50">
+                  Submitted
+                </span>
+              ) : (
+                <span className="text-[8.5px] font-bold text-amber-400 bg-amber-950/80 px-1.5 py-0.2 rounded border border-amber-800/50">
+                  Pending
+                </span>
+              )}
+            </div>
 
-                {/* Submitted Dynamic Metrics (e.g. No of videos done, pending, etc.) */}
-                {parsedReport.metrics.length > 0 && (
-                  <div className="flex flex-wrap gap-1 pt-0.5">
-                    {parsedReport.metrics.map((m, idx) => (
-                      <span
-                        key={idx}
-                        className="bg-slate-900/90 text-slate-200 px-1.5 py-0.5 rounded-md border border-emerald-500/30 text-[9px] font-semibold shadow-xs"
-                      >
-                        <strong className="text-emerald-300 font-bold">{m.label}:</strong> {m.value}
+            {parsedReport ? (
+              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 space-y-1.5 shadow-md">
+                {parsedReport.projectName && (
+                  <div className="flex items-center justify-between font-bold text-emerald-300 text-[9px] pb-1 border-b border-slate-800/80">
+                    <span className="flex items-center gap-1.5 truncate max-w-35">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block shrink-0 animate-pulse"></span>
+                      <span className="truncate text-emerald-200">{parsedReport.projectName}</span>
+                    </span>
+                    {parsedReport.progressPercent > 0 && (
+                      <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.2 rounded text-[8px] font-extrabold shrink-0">
+                        {parsedReport.progressPercent}%
                       </span>
-                    ))}
+                    )}
                   </div>
                 )}
 
+                {/* Structured Key-Value Fields */}
+                <div className="space-y-1">
+                  {parsedReport.fields.map((f, idx) => (
+                    <div
+                      key={idx}
+                      className={`flex items-start justify-between gap-2 text-[9.5px] py-0.5 ${
+                        f.isBlocked
+                          ? 'text-rose-300 bg-rose-950/40 px-1.5 py-0.5 rounded border border-rose-800/40'
+                          : 'text-slate-300'
+                      }`}
+                    >
+                      <span className="font-semibold text-slate-400 shrink-0">{f.label}:</span>
+                      <span className={`font-bold text-right truncate ${f.isBlocked ? 'text-rose-400 font-extrabold' : 'text-slate-100'}`}>
+                        {f.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
                 {parsedReport.paragraphText && (
-                  <p className="text-slate-300 text-[9.5px] line-clamp-1 italic font-medium pt-0.5">
+                  <p className="text-slate-400 text-[9px] line-clamp-2 italic font-medium pt-1 border-t border-slate-800/60">
                     "{parsedReport.paragraphText}"
                   </p>
                 )}
               </div>
             ) : (
-              <div className="flex items-center justify-between text-slate-400 text-[9.5px] bg-slate-900/80 px-2.5 py-1.5 rounded-lg border border-slate-800 shadow-xs">
-                <span className="font-medium text-slate-400">Daily Report:</span>
-                <span className="font-bold text-rose-400 bg-rose-950/60 px-1.5 py-0.2 rounded border border-rose-800/40">Pending</span>
+              <div className="text-slate-400 text-[9.5px] bg-slate-900/60 px-2.5 py-2 rounded-lg border border-slate-800/80 italic text-center">
+                No daily report submitted yet.
               </div>
             )}
           </div>

@@ -45,7 +45,8 @@ export function startDeadlineMonitor() {
   void execute()
 
   /*
-   * Check every 5 minutes.
+   * Check every 1 minute so 1h, 30m, and 5m
+   * deadline notifications trigger accurately.
    *
    * The notification windows
    * themselves remain protected
@@ -57,11 +58,11 @@ export function startDeadlineMonitor() {
       () => {
         void execute()
       },
-      5 * 60 * 1000,
+      1 * 60 * 1000,
     )
 
   console.log(
-    '[Deadline Monitor] Started (5 min interval)',
+    '[Deadline Monitor] Started (1 min interval)',
   )
 }
 

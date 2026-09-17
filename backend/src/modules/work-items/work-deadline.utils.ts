@@ -16,10 +16,13 @@ export type DeadlineState =
 export function createDeadlineDateTime(
   deadlineDate: string | Date | null | undefined,
   deadlineTime?: string | null,
+  timezone?: string | null,
 ): Date | null {
   if (!deadlineDate) {
     return null
   }
+
+  const zone = timezone || 'local'
 
   if (deadlineDate instanceof Date) {
     if (Number.isNaN(deadlineDate.getTime())) return null
@@ -39,7 +42,7 @@ export function createDeadlineDateTime(
 
   // If contains 'T', parse full ISO
   if (rawDateStr.includes('T')) {
-    const dt = DateTime.fromISO(rawDateStr)
+    const dt = DateTime.fromISO(rawDateStr, { zone })
     if (!dt.isValid) return null
     if (deadlineTime) {
       const parts = deadlineTime.split(':').map(Number)
@@ -76,7 +79,7 @@ export function createDeadlineDateTime(
 
   const dt = DateTime.fromObject(
     { year, month, day, hour, minute, second, millisecond },
-    { zone: 'local' },
+    { zone },
   )
 
   return dt.isValid ? dt.toJSDate() : new Date(year, month - 1, day, hour, minute, second, millisecond)

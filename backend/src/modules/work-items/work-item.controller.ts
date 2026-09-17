@@ -17,6 +17,7 @@ import {
 import { transitionWorkItemStatus } from './work-item-status.service.js'
 import { getActivity } from '../work-activity/work-activity.service.js'
 import { runDeadlineMonitor } from './work-item-deadline-monitor.service.js'
+import { notifyWorkAssignment } from '../notifications/notification.service.js'
 
 export async function listWorkItems(req: Request, res: Response) {
   try {
@@ -152,9 +153,58 @@ export async function addWorkItemsBulk(req: Request, res: Response) {
         organizationId,
         userId,
         role,
-        item,
+        { ...item, skipNotification: true },
       )
       createdItems.push(created)
+    }
+
+    // Group created items by assigned employee and send EXACTLY ONE notification per employee
+    const byAssignee = new Map<string, typeof createdItems>()
+    for (const item of createdItems) {
+      if (item.assigned_to && item.assigned_to !== userId) {
+        const list = byAssignee.get(item.assigned_to) || []
+        list.push(item)
+        byAssignee.set(item.assigned_to, list)
+      }
+    }
+
+    for (const [assigneeId, items] of byAssignee.entries()) {
+      try {
+        if (items.length === 1) {
+          const it = items[0]
+          const targetQty = it.target_quantity
+          const unitStr = it.quantity_unit || 'tasks'
+          const targetSummary = targetQty ? ` with target: ${targetQty} ${unitStr}` : ''
+          const deadlineSummary = it.deadline
+            ? ` (Due: ${it.deadline}${it.deadline_time ? ` at ${it.deadline_time}` : ''})`
+            : ''
+          await notifyWorkAssignment({
+            organizationId,
+            workItemId: it.id,
+            projectId: it.project_id,
+            title: 'New Work Assigned',
+            message: `You have been assigned "${it.title}"${targetSummary}${deadlineSummary}.`,
+            authorUserId: userId,
+            assignedTo: assigneeId,
+            createdBy: userId,
+          })
+        } else {
+          const titles = items.map((i) => `"${i.title}"`).slice(0, 3).join(', ')
+          const moreCount = items.length > 3 ? ` and ${items.length - 3} more` : ''
+          await notifyWorkAssignment({
+            organizationId,
+            workItemId: items[0].id,
+            projectId: items[0].project_id,
+            title: 'New Work Assigned',
+            message: `You have been assigned ${items.length} work items: ${titles}${moreCount}.`,
+            authorUserId: userId,
+            assignedTo: assigneeId,
+            createdBy: userId,
+          })
+        }
+      } catch (err) {
+        console.error('Failed to notify bulk work assignment:', err)
+      }
     }
 
     return res.status(201).json({
@@ -264,7 +314,8 @@ export async function removeWorkItem(req: Request, res: Response) {
       })
     }
 
-    await deleteWorkItem(organizationId, req.params.id as string)
+    const userId = req.profile?.id
+    await deleteWorkItem(organizationId, req.params.id as string, userId)
 
     return res.json({
       success: true,
